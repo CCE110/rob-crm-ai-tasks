@@ -1,0 +1,5 @@
+flask
+supabase
+anthropic
+python-dotenv
+gunicorn
