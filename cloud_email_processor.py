@@ -1,27 +1,16 @@
-#!/usr/bin/env python3
-"""
-Cloud-based AI Email Processor - Runs on Railway 24/7
-"""
-
-import os
-import schedule
-import time
-import threading
-from datetime import datetime, timedelta
 import imaplib
 import email
 from email.header import decode_header
-import json
-from task_manager import TaskManager
-from enhanced_task_manager import EnhancedTaskManager
+import os
+import time
+import schedule
+from datetime import datetime, timedelta
+import pytz
 from anthropic import Anthropic
-from dotenv import load_dotenv
-
-load_dotenv()
+from enhanced_task_manager import EnhancedTaskManager
 
 class CloudEmailProcessor:
     def __init__(self):
-        self.tm = TaskManager()
         self.etm = EnhancedTaskManager()
         self.claude = Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
         
@@ -38,10 +27,13 @@ class CloudEmailProcessor:
             'Veterans Health Centre (VHC)': '0b083ea5-ff45-4606-8cae-6ed387926641'
         }
         
+        # Track processed emails to avoid duplicates
+        self.processed_emails = set()
+        
         print("🌐 Cloud Email Processor initialized!")
     
     def process_emails_job(self):
-        """Check for new emails every 15 minutes"""
+        """Check for new emails every 15 minutes - FIXED to get recent emails"""
         try:
             print(f"🔍 Checking emails at {datetime.now()}")
             
@@ -49,22 +41,38 @@ class CloudEmailProcessor:
             mail.login(self.gmail_user, self.gmail_password)
             mail.select('inbox')
             
-            status, messages = mail.search(None, 'UNSEEN')
+            # FIXED: Search for emails from last 7 days regardless of read status
+            aest = pytz.timezone('Australia/Brisbane')
+            seven_days_ago = (datetime.now(aest) - timedelta(days=7)).strftime("%d-%b-%Y")
+            
+            # Search for emails since 7 days ago
+            status, messages = mail.search(None, f'(SINCE {seven_days_ago})')
             
             if not messages[0]:
-                print("📭 No new emails")
+                print("📭 No emails in last 7 days")
                 mail.close()
                 mail.logout()
                 return
             
-            email_count = len(messages[0].split())
-            print(f"📬 Found {email_count} new emails")
+            email_ids = messages[0].split()
             
-            for msg_id in messages[0].split():
+            # Filter out already processed emails
+            new_emails = [eid for eid in email_ids if eid not in self.processed_emails]
+            
+            if not new_emails:
+                print("📭 No new emails (all already processed)")
+                mail.close()
+                mail.logout()
+                return
+            
+            print(f"📬 Found {len(new_emails)} new emails to process")
+            
+            for msg_id in new_emails:
                 try:
                     self.analyze_and_create_tasks(mail, msg_id)
+                    self.processed_emails.add(msg_id)
                 except Exception as e:
-                    print(f"❌ Error processing email: {e}")
+                    print(f"❌ Error processing email {msg_id}: {e}")
             
             mail.close()
             mail.logout()
@@ -75,18 +83,25 @@ class CloudEmailProcessor:
     
     def analyze_and_create_tasks(self, mail, msg_id):
         """Use Claude AI to analyze and create tasks"""
-        status, msg_data = mail.fetch(msg_id, '(RFC822)')
-        email_body = email.message_from_bytes(msg_data[0][1])
-        
-        subject = decode_header(email_body['Subject'])[0][0]
-        if isinstance(subject, bytes):
-            subject = subject.decode()
-        
-        print(f"📧 Processing: {subject[:50]}...")
-        
-        # Mark as read to avoid reprocessing
-        mail.store(msg_id, '+FLAGS', '\\Seen')
-        print(f"✅ Processed: {subject}")
+        try:
+            status, msg_data = mail.fetch(msg_id, '(RFC822)')
+            email_body = email.message_from_bytes(msg_data[0][1])
+            
+            subject = decode_header(email_body['Subject'])[0][0]
+            if isinstance(subject, bytes):
+                subject = subject.decode()
+            
+            # Get email date
+            date_str = email_body.get('Date', '')
+            
+            print(f"📧 Processing: {subject[:50]}...")
+            print(f"   Date: {date_str}")
+            
+            # TODO: Add your Claude AI processing here
+            # For now, just mark as processed
+            
+        except Exception as e:
+            print(f"❌ Error in analyze_and_create_tasks: {e}")
     
     def send_daily_summary_job(self):
         """Send daily summary at 8AM AEST"""
@@ -102,6 +117,7 @@ class CloudEmailProcessor:
         schedule.every(15).minutes.do(self.process_emails_job)
         schedule.every().day.at("22:00").do(self.send_daily_summary_job)
         
+        # Process emails immediately on startup
         self.process_emails_job()
         
         print("🌐 Cloud scheduler started - Running 24/7!")
@@ -115,50 +131,3 @@ class CloudEmailProcessor:
 if __name__ == "__main__":
     processor = CloudEmailProcessor()
     processor.start_cloud_scheduler()
-
-    def force_process_all_emails(self):
-        """Force process all emails in inbox regardless of timestamp"""
-        try:
-            print("🔄 Force processing ALL emails...")
-            import imaplib
-            import email as email_lib
-            
-            mail = imaplib.IMAP4_SSL('imap.gmail.com')
-            mail.login('robcrm.ai@gmail.com', os.getenv('GMAIL_APP_PASSWORD'))
-            mail.select('inbox')
-            
-            # Get ALL emails
-            status, messages = mail.search(None, 'ALL')
-            
-            if status == 'OK' and messages[0]:
-                email_ids = messages[0].split()
-                print(f"📧 Found {len(email_ids)} total emails")
-                
-                processed = 0
-                for email_id in email_ids[-20:]:  # Process last 20 emails
-                    try:
-                        status, msg_data = mail.fetch(email_id, '(RFC822)')
-                        if status == 'OK':
-                            email_message = email_lib.message_from_bytes(msg_data[0][1])
-                            subject = email_message.get('Subject', '')
-                            
-                            # Only process task-related emails
-                            if any(keyword in subject.lower() for keyword in ['task', 'create', 'set', 'follow']):
-                                print(f"✅ Processing: {subject[:50]}...")
-                                processed += 1
-                    except Exception as e:
-                        print(f"❌ Error processing email: {e}")
-                        
-                print(f"🎉 Force processed {processed} emails")
-                
-            mail.close()
-            mail.logout()
-            
-        except Exception as e:
-            print(f"❌ Force processing error: {e}")
-
-# Run force processing on startup
-if __name__ == "__main__":
-    processor = CloudEmailProcessor()
-    processor.force_process_all_emails()  # Process existing emails first
-    processor.run_scheduler()  # Then start normal operation
