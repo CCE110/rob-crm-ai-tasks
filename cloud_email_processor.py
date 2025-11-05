@@ -210,8 +210,33 @@ IMPORTANT: If no specific date mentioned, leave due_date as empty string "". Onl
             print(f"Reminder error: {e}")
     
     def send_reminder(self, task, due_time):
-        """Send reminder email"""
-        html = f"""<html><body><h2>⏰ Task Reminder</h2><p><strong>{task['title']}</strong></p><p>Due: {due_time.strftime('%I:%M %p')}</p><a href="{self.action_url}?action=complete&task_id={task['id']}">Complete</a></body></html>"""
+        """Send reminder email with delay options"""
+        html = f"""
+        <html>
+        <head>
+            <style>
+                body {{ font-family: Arial; padding: 20px; }}
+                .task-box {{ background: #fef2f2; border-left: 4px solid #ef4444; padding: 15px; margin: 15px 0; }}
+                .buttons {{ margin-top: 15px; }}
+                .btn {{ display: inline-block; padding: 10px 16px; margin: 4px; text-decoration: none; border-radius: 6px; font-size: 13px; color: white; }}
+                .btn-complete {{ background: #10b981; }}
+                .btn-delay {{ background: #6b7280; }}
+            </style>
+        </head>
+        <body>
+            <h2>⏰ Task Reminder</h2>
+            <div class="task-box">
+                <p><strong>{task['title']}</strong></p>
+                <p>Due: {due_time.strftime('%I:%M %p AEST')}</p>
+            </div>
+            <div class="buttons">
+                <a href="{self.action_url}?action=complete&task_id={task['id']}" class="btn btn-complete">✅ Complete</a>
+                <a href="{self.action_url}?action=delay_1hour&task_id={task['id']}" class="btn btn-delay">⏰ +1 Hour</a>
+                <a href="{self.action_url}?action=delay_1day&task_id={task['id']}" class="btn btn-delay">📅 +1 Day</a>
+                <a href="{self.action_url}?action=delay_custom&task_id={task['id']}" class="btn btn-delay">🗓️ Custom</a>
+            </div>
+        </body>
+        </html>"""
         self.send_email(self.your_email, f"⏰ {task['title'][:40]}", html)
 
     def start(self):
