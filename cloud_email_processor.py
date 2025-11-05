@@ -125,7 +125,7 @@ Extract tasks in JSON format:
 If not a task email, return: {{"create_tasks": false, "tasks": []}}"""
 
             response = self.claude.messages.create(
-                model="claude-3-5-sonnet-20241022",
+                model="claude-sonnet-4-20250514",
                 max_tokens=1000,
                 messages=[{"role": "user", "content": prompt}]
             )
