@@ -186,7 +186,6 @@ Respond ONLY with valid JSON:
                 'due_time': task_data.get('due_time'),
                 'priority': task_data.get('priority', 'medium'),
                 'status': 'pending',
-                'email_source': email_subject
             }).execute()
             
             if result.data:
