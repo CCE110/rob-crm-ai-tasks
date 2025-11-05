@@ -249,6 +249,7 @@ IMPORTANT: If no specific date mentioned, leave due_date as empty string "". Onl
         self.process_emails()
         print("🌐 Cloud scheduler started - Running 24/7!")
         print("📧 Email checks: Every 15 minutes")
+        print("⏰ Task reminders: Every 15 minutes")
         print("📊 Daily summaries: 8:00 AM AEST")
         print(f"📬 Summaries sent to: rob@cloudcleanenergy.com.au")
         while True:
