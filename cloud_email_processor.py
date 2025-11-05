@@ -149,6 +149,7 @@ Respond ONLY with valid JSON:
             
             # Parse response
             analysis_text = response.content[0].text.strip()
+            print(f"   🤖 Raw response: {analysis_text[:300]}")
             # Remove markdown code blocks if present
             if analysis_text.startswith('```'):
                 analysis_text = re.sub(r'^```[a-z]*
