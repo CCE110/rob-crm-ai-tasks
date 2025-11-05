@@ -3,12 +3,14 @@ import imaplib
 import email
 from email.header import decode_header
 import json
+import re
 from task_manager import TaskManager
 from anthropic import Anthropic
 import os
 import time
 import schedule
-from datetime import datetime
+from datetime import datetime, timedelta
+import pytz
 
 class CloudEmailProcessor:
     def __init__(self):
@@ -37,16 +39,13 @@ class CloudEmailProcessor:
             mail.login(self.gmail_user, self.gmail_pass)
             mail.select('inbox')
             
-            # Get unread emails
             # Get emails from last 7 days
-            from datetime import timedelta
-            import pytz
             aest = pytz.timezone('Australia/Brisbane')
             seven_days_ago = (datetime.now(aest) - timedelta(days=7)).strftime("%d-%b-%Y")
             status, messages = mail.search(None, f'(SINCE {seven_days_ago})')
             
             if not messages[0]:
-                print("📭 No new emails")
+                print("📭 No emails in last 7 days")
                 mail.close()
                 mail.logout()
                 return
@@ -131,17 +130,13 @@ If not a task email, return: {{"create_tasks": false, "tasks": []}}"""
             )
             
             raw_response = response.content[0].text
-            print(f"   🤖 Claude raw response: {raw_response[:200]}")
+            print(f"   🤖 Claude: {raw_response[:100]}...")
             
-            # Strip markdown code blocks if present
-            if raw_response.strip().startswith('```'):
-                # Remove ```json at start and ``` at end
-                raw_response = raw_response.strip()
-                raw_response = raw_response.split('
-', 1)[1]  # Remove first line
-                raw_response = raw_response.rsplit('
-', 1)[0]  # Remove last line
-                raw_response = raw_response.strip()
+            # Strip markdown code blocks
+            raw_response = raw_response.strip()
+            if raw_response.startswith('```'):
+                lines = raw_response.split('\n')
+                raw_response = '\n'.join(lines[1:-1])
             
             analysis = json.loads(raw_response)
             
