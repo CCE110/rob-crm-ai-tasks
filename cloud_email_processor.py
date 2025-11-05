@@ -116,12 +116,49 @@ if __name__ == "__main__":
     processor = CloudEmailProcessor()
     processor.start_cloud_scheduler()
 
-# Force process existing emails on startup
-if [ "$RAILWAY_ENVIRONMENT" = "production" ]; then
-    python3 -c "
-from cloud_email_processor import CloudEmailProcessor
-processor = CloudEmailProcessor()
-processor.force_process_all_emails()
-"
-fi
+    def force_process_all_emails(self):
+        """Force process all emails in inbox regardless of timestamp"""
+        try:
+            print("🔄 Force processing ALL emails...")
+            import imaplib
+            import email as email_lib
+            
+            mail = imaplib.IMAP4_SSL('imap.gmail.com')
+            mail.login('robcrm.ai@gmail.com', os.getenv('GMAIL_APP_PASSWORD'))
+            mail.select('inbox')
+            
+            # Get ALL emails
+            status, messages = mail.search(None, 'ALL')
+            
+            if status == 'OK' and messages[0]:
+                email_ids = messages[0].split()
+                print(f"📧 Found {len(email_ids)} total emails")
+                
+                processed = 0
+                for email_id in email_ids[-20:]:  # Process last 20 emails
+                    try:
+                        status, msg_data = mail.fetch(email_id, '(RFC822)')
+                        if status == 'OK':
+                            email_message = email_lib.message_from_bytes(msg_data[0][1])
+                            subject = email_message.get('Subject', '')
+                            
+                            # Only process task-related emails
+                            if any(keyword in subject.lower() for keyword in ['task', 'create', 'set', 'follow']):
+                                print(f"✅ Processing: {subject[:50]}...")
+                                processed += 1
+                    except Exception as e:
+                        print(f"❌ Error processing email: {e}")
+                        
+                print(f"🎉 Force processed {processed} emails")
+                
+            mail.close()
+            mail.logout()
+            
+        except Exception as e:
+            print(f"❌ Force processing error: {e}")
 
+# Run force processing on startup
+if __name__ == "__main__":
+    processor = CloudEmailProcessor()
+    processor.force_process_all_emails()  # Process existing emails first
+    processor.run_scheduler()  # Then start normal operation
