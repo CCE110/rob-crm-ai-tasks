@@ -132,6 +132,17 @@ If not a task email, return: {{"create_tasks": false, "tasks": []}}"""
             
             raw_response = response.content[0].text
             print(f"   🤖 Claude raw response: {raw_response[:200]}")
+            
+            # Strip markdown code blocks if present
+            if raw_response.strip().startswith('```'):
+                # Remove ```json at start and ``` at end
+                raw_response = raw_response.strip()
+                raw_response = raw_response.split('
+', 1)[1]  # Remove first line
+                raw_response = raw_response.rsplit('
+', 1)[0]  # Remove last line
+                raw_response = raw_response.strip()
+            
             analysis = json.loads(raw_response)
             
             if not analysis.get('create_tasks') or not analysis.get('tasks'):
