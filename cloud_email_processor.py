@@ -38,7 +38,12 @@ class CloudEmailProcessor:
             mail.select('inbox')
             
             # Get unread emails
-            status, messages = mail.search(None, 'UNSEEN')
+            # Get emails from last 7 days
+            from datetime import timedelta
+            import pytz
+            aest = pytz.timezone('Australia/Brisbane')
+            seven_days_ago = (datetime.now(aest) - timedelta(days=7)).strftime("%d-%b-%Y")
+            status, messages = mail.search(None, f'(SINCE {seven_days_ago})')
             
             if not messages[0]:
                 print("📭 No new emails")
