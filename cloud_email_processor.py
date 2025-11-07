@@ -350,17 +350,25 @@ body {{ font-family: Arial, sans-serif; background: #f5f5f5; padding: 20px; }}
 
     def send_task_creation_confirmation(self, task, business_name):
         """Send immediate confirmation email when task is created"""
-        business_color = self.businesses[business_name]['color']
+        # Business colors mapping
+        business_colors = {
+            'Cloud Clean Energy': '#10b981',
+            'DSW (Direct Solar Warehouse)': '#f59e0b',
+            'KVELL': '#8b5cf6',
+            'AI Project Pro': '#3b82f6',
+            'Veterans Health Centre (VHC)': '#ef4444'
+        }
+        business_color = business_colors.get(business_name, '#6b7280')
         due_date = task.get('due_date', 'Not set')
         due_time = task.get('due_time', '08:00:00')
         
         html = f"""<html><head><style>
-body {{ font-family: Arial, sans-serif; background: #f5f5f5; padding: 20px; }}
-.container {{ max-width: 600px; margin: 0 auto; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }}
+body {{ font-family: Arial; background: #f5f5f5; padding: 20px; }}
+.container {{ max-width: 600px; margin: 0 auto; background: white; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }}
 .header {{ background: {business_color}; color: white; padding: 24px; text-align: center; }}
 .content {{ padding: 24px; }}
 .task-box {{ border-left: 4px solid {business_color}; padding: 16px; margin: 16px 0; background: #f9fafb; }}
-.btn {{ display: inline-block; padding: 12px 20px; margin: 6px 4px; text-decoration: none; border-radius: 6px; color: white; font-weight: 500; }}
+.btn {{ display: inline-block; padding: 12px 20px; margin: 6px; text-decoration: none; border-radius: 6px; color: white; }}
 .btn-complete {{ background: #10b981; }}
 .btn-postpone {{ background: #6b7280; }}
 </style></head><body>
@@ -371,18 +379,14 @@ body {{ font-family: Arial, sans-serif; background: #f5f5f5; padding: 20px; }}
 <h3>{task['title']}</h3>
 <p><strong>Business:</strong> {business_name}</p>
 <p><strong>Due:</strong> {due_date} at {due_time}</p>
-<p><strong>Priority:</strong> {task.get('priority', 'medium').upper()}</p>
 </div>
 <div>
 <a href="{self.action_url}?action=complete&task_id={task['id']}" class="btn btn-complete">✅ Complete</a>
 <a href="{self.action_url}?action=delay_1day&task_id={task['id']}" class="btn btn-postpone">📅 +1 Day</a>
 <a href="{self.action_url}?action=delay_1week&task_id={task['id']}" class="btn btn-postpone">📅 +1 Week</a>
-</div>
-</div>
-</div>
-</body></html>"""
+</div></div></div></body></html>"""
         
-        self.etm.send_html_email(self.your_email, f"✅ Task: {task['title'][:50]}", html, f"Task created: {task['title']}")
+        self.etm.send_html_email(self.your_email, f"✅ Task: {task['title'][:50]}", html, f"Task: {task['title']}")
         print(f"   📧 Confirmation sent: {task['title'][:40]}")
 
     def start(self):
