@@ -259,14 +259,12 @@ IMPORTANT: If no specific date mentioned, leave due_date as empty string "". Onl
                     print(f"   ❌ Error processing task: {e}")
             
             # Summary
-            print(f"
-{'='*60}")
+            print(f"\n{"="*60}")
             if sent_count > 0:
                 print(f"✅ Sent {sent_count} reminder(s)")
             else:
                 print(f"✅ No tasks in 30-min reminder window")
-            print(f"{'='*60}
-")
+            print(f"{"="*60}\n")
             
         except Exception as e:
             print(f"❌ CRITICAL ERROR in send_task_reminders:")
