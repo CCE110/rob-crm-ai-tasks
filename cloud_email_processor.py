@@ -317,7 +317,15 @@ IMPORTANT: If no specific date mentioned, leave due_date as empty string "". Onl
 
     def send_task_creation_confirmation(self, task, business_name):
         """Send immediate confirmation email when task is created"""
-        business_color = self.businesses[business_name]['color']
+        # Business colors mapping
+        business_colors = {
+            'Cloud Clean Energy': '#10b981',
+            'DSW (Direct Solar Warehouse)': '#f59e0b',
+            'KVELL': '#8b5cf6',
+            'AI Project Pro': '#3b82f6',
+            'Veterans Health Centre (VHC)': '#ef4444'
+        }
+        business_color = business_colors.get(business_name, '#6b7280')
         due_date = task.get('due_date', 'Not set')
         due_time = task.get('due_time', '08:00:00')
         
