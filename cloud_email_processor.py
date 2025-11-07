@@ -218,8 +218,7 @@ IMPORTANT: If no specific date mentioned, leave due_date as empty string "". Onl
                 task_title = task['title'][:50]
                 due_time_str = task['due_time']
                 
-                print(f"
-🔍 Checking: {task_title}")
+                print(f"\n🔍 Checking: {task_title}")
                 print(f"   Due time: {due_time_str}")
                 
                 try:
