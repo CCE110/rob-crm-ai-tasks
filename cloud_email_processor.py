@@ -345,7 +345,7 @@ body {{ font-family: Arial, sans-serif; background: #f5f5f5; padding: 20px; }}
 <a href="{self.action_url}?action=delay_1week&task_id={task['id']}" class="btn btn-postpone">📅 +1 Week</a>
 </div></div></div></body></html>"""
         
-        self.etm.send_html_email(self.your_email, f"✅ Task: {task['title'][:50]}", html, f"Task: {task['title']}")
+        self.etm.send_html_email('rob@cloudcleanenergy.com.au', f"✅ Task: {task['title'][:50]}", html, f"Task: {task['title']}")
         print(f"   📧 Confirmation sent: {task['title'][:40]}")
 
 
@@ -387,7 +387,7 @@ body {{ font-family: Arial; background: #f5f5f5; padding: 20px; }}
 <a href="{self.action_url}?action=delay_1week&task_id={task['id']}" class="btn btn-postpone">📅 +1 Week</a>
 </div></div></div></body></html>"""
         
-        self.etm.send_html_email(self.your_email, f"✅ Task: {task['title'][:50]}", html, f"Task: {task['title']}")
+        self.etm.send_html_email('rob@cloudcleanenergy.com.au', f"✅ Task: {task['title'][:50]}", html, f"Task: {task['title']}")
         print(f"   📧 Confirmation sent: {task['title'][:40]}")
 
     def start(self):
