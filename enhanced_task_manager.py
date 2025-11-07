@@ -2,8 +2,6 @@
 """
 Enhanced 5-Business Task Management System with Sub-Tasks
 """
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail
 
 import os
 from datetime import datetime, timedelta, date

@@ -3,8 +3,6 @@
 Multi-Business Task Management System
 Uses Supabase for database and Zoho Mail for notifications
 """
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail
 
 import os
 import sys
