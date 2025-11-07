@@ -244,7 +244,7 @@ IMPORTANT: If no specific date mentioned, leave due_date as empty string "". Onl
         schedule.every(15).minutes.do(self.send_task_reminders)
         
         # Daily summary at 8 AM AEST
-        schedule.every().day.at("22:00").do(self.etm.send_enhanced_daily_summary)  # 8 AM AEST = 22:00 UTC
+        schedule.every().day.at("08:00").do(self.etm.send_enhanced_daily_summary)  # 8 AM AEST = 22:00 UTC
         print("🚀 Processing emails on startup...")
         self.process_emails()
         print("🌐 Cloud scheduler started - Running 24/7!")
