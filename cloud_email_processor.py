@@ -29,6 +29,7 @@ class CloudEmailProcessor:
             'Veterans Health Centre (VHC)': '0b083ea5-ff45-4606-8cae-6ed387926641'
         }
         self.processed_emails = set()
+        self.action_url = os.getenv('TASK_ACTION_URL', 'https://rob-crm-tasks-production.up.railway.app/action')
         self.etm = EnhancedTaskManager()
         print("🌐 Cloud Email Processor initialized!")
     
