@@ -155,6 +155,8 @@ IMPORTANT: If no specific date mentioned, leave due_date as empty string "". Onl
                 created_task = self.create_task(task)
         except Exception as e:
             print(f"   ❌ Error: {e}")
+            return None
+        return message_id
     
     def create_task(self, task_data):
         try:
