@@ -68,9 +68,15 @@ class CloudEmailProcessor:
                 return
             print(f"📬 Found {new_count} new emails to process")
             for msg_id in email_ids:
-                if msg_id in self.processed_emails:
+                # Extract Message-ID first to check if processed
+                status, msg_data = mail.uid("fetch", msg_id, '(RFC822)')
+                email_body = email.message_from_bytes(msg_data[0][1])
+                message_id = email_body.get('Message-ID', str(msg_id))
+                
+                if message_id in self.processed_emails:
                     continue
-                message_id = self.process_single_email(mail, msg_id)
+                
+                message_id = self.process_single_email(mail, msg_id, message_id)
                 if message_id:
                     self.processed_emails.add(message_id)
                     try:
@@ -95,13 +101,10 @@ class CloudEmailProcessor:
             text = '\n'.join(lines).strip()
         return text
     
-    def process_single_email(self, mail, msg_id):
+    def process_single_email(self, mail, msg_id, message_id):
         try:
             status, msg_data = mail.uid("fetch", msg_id, '(RFC822)')
             email_body = email.message_from_bytes(msg_data[0][1])
-            
-            # Get permanent Message-ID
-            message_id = email_body.get('Message-ID', str(msg_id))
             subject = decode_header(email_body['Subject'])[0][0]
             if isinstance(subject, bytes):
                 subject = subject.decode()
