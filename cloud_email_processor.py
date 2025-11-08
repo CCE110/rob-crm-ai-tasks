@@ -210,6 +210,12 @@ IMPORTANT: If no specific date mentioned, leave due_date as empty string "". Onl
         """
         Check for tasks due soon and send reminders with proper timezone handling
         """
+        # --- DIAGNOSTIC ---
+        print("="*60)
+        print(f"🔔🔔🔔 REMINDER FUNCTION CALLED! (Timestamp: {datetime.now()})")
+        print("="*60)
+        # --- END DIAGNOSTIC ---
+        
         print("🔔 Checking for task reminders...")
         
         try:
