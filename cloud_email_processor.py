@@ -53,7 +53,7 @@ class CloudEmailProcessor:
             mail.select('inbox')
             aest = pytz.timezone('Australia/Brisbane')
             seven_days_ago = (datetime.now(aest) - timedelta(days=7)).strftime("%d-%b-%Y")
-            status, messages = mail.search(None, f'(SINCE {seven_days_ago})')
+            status, messages = mail.uid('search', None, f'(SINCE {seven_days_ago})')
             if not messages[0]:
                 print("📭 No emails in last 7 days")
                 mail.close()
