@@ -303,6 +303,7 @@ IMPORTANT: If no specific date mentioned, leave due_date as empty string "". Onl
             <div class="task-box">
                 <p><strong>{task['title']}</strong></p>
                 <p>Due: {due_time.strftime('%I:%M %p AEST')}</p>
+                {f'<div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #e5e7eb;"><strong>Notes:</strong><br>{task["description"]}</div>' if task.get('description') else ''}
             </div>
             <div class="buttons">
                 <a href="{self.action_url}?action=complete&task_id={task['id']}" class="btn btn-complete">✅ Complete</a>
