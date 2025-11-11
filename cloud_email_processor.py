@@ -407,8 +407,7 @@ body {{ font-family: Arial; background: #f5f5f5; padding: 20px; }}
         print(f"   📧 Confirmation sent: {task['title'][:40]}")
 
     def start(self):
-        print("🚀 Processing emails on startup...")
-        self.process_emails()
+        print("🚀 Starting scheduler (skipping startup email check)...")
         print("🌐 Cloud scheduler started - Running 24/7!")
         print("📧 Email checks: Every 15 minutes")
         print("⏰ Task reminders: Every 15 minutes")
