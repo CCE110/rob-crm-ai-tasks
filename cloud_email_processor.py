@@ -407,11 +407,6 @@ body {{ font-family: Arial; background: #f5f5f5; padding: 20px; }}
         print(f"   📧 Confirmation sent: {task['title'][:40]}")
 
     def start(self):
-        schedule.every(15).minutes.do(self.process_emails)
-        schedule.every(15).minutes.do(self.send_task_reminders)
-        
-        # Daily summary at 8 AM AEST
-        schedule.every().day.at("22:00").do(self.etm.send_enhanced_daily_summary)  # 22:00 UTC = 8 AM AEST  # 8 AM AEST = 22:00 UTC
         print("🚀 Processing emails on startup...")
         self.process_emails()
         print("🌐 Cloud scheduler started - Running 24/7!")
@@ -419,8 +414,33 @@ body {{ font-family: Arial; background: #f5f5f5; padding: 20px; }}
         print("⏰ Task reminders: Every 15 minutes")
         print("📊 Daily summaries: 8:00 AM AEST")
         print(f"📬 Summaries sent to: rob@cloudcleanenergy.com.au")
+        
+        last_email_check = datetime.now()
+        last_reminder_check = datetime.now()
+        last_summary_check = datetime.now()
+        
         while True:
-            schedule.run_pending()
+            now = datetime.now()
+            
+            # Email check every 15 minutes
+            if (now - last_email_check).total_seconds() >= 900:  # 900 sec = 15 min
+                print(f"
+⏰ 15 minutes elapsed - running email check")
+                self.process_emails()
+                last_email_check = now
+            
+            # Reminder check every 15 minutes
+            if (now - last_reminder_check).total_seconds() >= 900:
+                print(f"⏰ 15 minutes elapsed - running reminder check")
+                self.send_task_reminders()
+                last_reminder_check = now
+            
+            # Daily summary at 8 AM AEST (22:00 UTC)
+            if now.hour == 22 and now.minute == 0 and (now - last_summary_check).total_seconds() >= 3600:
+                print(f"⏰ 8 AM AEST - sending daily summary")
+                self.etm.send_enhanced_daily_summary()
+                last_summary_check = now
+            
             time.sleep(60)
 
 if __name__ == "__main__":
