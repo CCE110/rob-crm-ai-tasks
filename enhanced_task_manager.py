@@ -1,265 +1,660 @@
-#!/usr/bin/env python3
 """
-Enhanced 5-Business Task Management System with Sub-Tasks
+Enhanced Task Manager - AI Summarization & Rich Email Templates
+Updated: November 28, 2025
 """
 
 import os
-from datetime import datetime, timedelta, date
-from typing import List, Optional, Dict
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from supabase import create_client, Client
+import requests
+import json
+from datetime import datetime, date, timedelta
 from anthropic import Anthropic
-from dotenv import load_dotenv
-
-load_dotenv()
+import pytz
 
 class EnhancedTaskManager:
-    def __init__(self):
-        # Initialize Supabase
-        supabase_url = os.getenv('SUPABASE_URL')
-        supabase_key = os.getenv('SUPABASE_KEY')
+    def __init__(self, task_manager=None):
+        self.anthropic = Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
+        self.resend_api_key = os.getenv('RESEND_API_KEY')
+        self.from_email = 'rob@cloudcleanenergy.com.au'
+        self.aest = pytz.timezone('Australia/Brisbane')
         
-        self.supabase: Client = create_client(supabase_url, supabase_key)
-        
-        # Enhanced business mapping - ALL 5 COMPANIES
-        self.business_names = {
-            'Cloud Clean Energy': 'Solar energy, main business operations',
-            'DSW (Direct Solar Warehouse)': 'Solar equipment wholesale and distribution', 
-            'KVELL': 'KVELL business operations',
-            'AI Project Pro': 'AI consulting business',
-            'Veterans Health Centre (VHC)': 'Veterans healthcare and support services'
-        }
-        
-        # Zoho Mail settings
-        self.smtp_server = "smtp.zoho.com.au"
-        self.smtp_port = 465
-        self.from_email = "rob@cloudcleanenergy.com.au"
-        self.smtp_password = os.getenv('ZOHO_PASSWORD')
+        # Import TaskManager if not provided
+        if task_manager:
+            self.tm = task_manager
+        else:
+            from task_manager import TaskManager
+            self.tm = TaskManager()
     
-    def get_businesses(self, active_only: bool = True) -> List[Dict]:
-        """Get all businesses"""
-        query = self.supabase.table('businesses').select('*')
-        if active_only:
-            query = query.eq('active', True)
-        
-        result = query.order('name').execute()
-        return result.data
+    # ========================================
+    # AI SUMMARIZATION
+    # ========================================
     
-    def get_business_by_name(self, name: str) -> Optional[Dict]:
-        """Get a business by name"""
-        result = self.supabase.table('businesses').select('*').eq('name', name).execute()
-        return result.data[0] if result.data else None
-    
-    def create_task_with_subtasks(self, business_name: str, title: str, description: str = "",
-                                 due_date: str = None, priority: str = "medium", 
-                                 subtasks: List[str] = None) -> Optional[Dict]:
-        """Create a task with optional sub-tasks"""
-        business = self.get_business_by_name(business_name)
-        if not business:
-            print(f"❌ Business '{business_name}' not found")
-            available = [b['name'] for b in self.get_businesses()]
-            print(f"Available businesses: {', '.join(available)}")
-            return None
-        
-        # Create main task
-        task_result = self.supabase.table('tasks').insert({
-            'business_id': business['id'],
-            'title': title,
-            'description': description,
-            'due_date': due_date,
-            'priority': priority,
-            'is_meeting': False
-        }).execute()
-        
-        if not task_result.data:
-            print("❌ Failed to create task")
-            return None
-        
-        task = task_result.data[0]
-        
-        # Create sub-tasks if provided
-        if subtasks:
-            for i, subtask_title in enumerate(subtasks):
-                self.supabase.table('subtasks').insert({
-                    'task_id': task['id'],
-                    'title': subtask_title,
-                    'completed': False,
-                    'order_index': i + 1
-                }).execute()
-        
-        print(f"✅ Task created: {title}")
-        print(f"🏢 Business: {business_name}")
-        print(f"📋 Sub-tasks: {len(subtasks) if subtasks else 0}")
-        return task
-    
-    def get_tasks_by_business(self) -> Dict[str, List[Dict]]:
-        """Get all pending tasks grouped by business with their sub-tasks"""
-        businesses = self.get_businesses()
-        business_tasks = {}
-        
-        for business in businesses:
-            # Get pending tasks for this business
-            tasks_result = self.supabase.table('tasks').select('*').eq('business_id', business['id']).eq('status', 'pending').order('due_date').execute()
-            tasks = tasks_result.data or []
-            
-            # Get sub-tasks for each task
-            for task in tasks:
-                subtasks_result = self.supabase.table('subtasks').select('*').eq('task_id', task['id']).order('order_index').execute()
-                task['subtasks'] = subtasks_result.data or []
-            
-            if tasks:  # Only include businesses with pending tasks
-                business_tasks[business['name']] = tasks
-        
-        return business_tasks
-    
-    def send_enhanced_daily_summary(self):
-        """Send daily summary with all 5 businesses and sub-tasks"""
-        today = datetime.now().date()
-        business_tasks = self.get_tasks_by_business()
-        
-        if not business_tasks:
-            print("📭 No pending tasks across all businesses")
-            return
-        
-        total_task_count = sum(len(tasks) for tasks in business_tasks.values())
-        subject = f"📊 5-Business Daily Summary - {today.strftime('%B %d, %Y')} ({total_task_count} tasks)"
-        
-        # Build enhanced HTML with 5 businesses and unique colors
-        business_html = ""
-        for business_name, tasks in business_tasks.items():
-            # Business-specific colors for all 5 companies
-            business_colors = {
-                'Cloud Clean Energy': '#10b981',                  # Green
-                'DSW (Direct Solar Warehouse)': '#f59e0b',        # Orange
-                'KVELL': '#8b5cf6',                              # Purple
-                'AI Project Pro': '#3b82f6',                     # Blue
-                'Veterans Health Centre (VHC)': '#ef4444'        # Red
-            }
-            color = business_colors.get(business_name, '#6b7280')
-            
-            business_html += f"""
-            <div style="margin-bottom: 30px; border: 2px solid {color}; border-radius: 12px; overflow: hidden;">
-                <div style="background: {color}; color: white; padding: 20px;">
-                    <h2 style="margin: 0; font-size: 20px;">🏢 {business_name}</h2>
-                    <p style="margin: 5px 0 0 0; opacity: 0.9;">{len(tasks)} pending task{'s' if len(tasks) != 1 else ''}</p>
-                </div>
-                <div style="padding: 20px; background: white;">
-            """
-            
-            for task in tasks:
-                overdue = datetime.fromisoformat(task['due_date']).date() < today if task['due_date'] else False
-                overdue_badge = "🚨 OVERDUE " if overdue else ""
-                
-                base_url = os.getenv('TASK_ACTION_URL', 'https://rob-crm-tasks-production.up.railway.app/action')
-                
-                # Sub-tasks HTML
-                subtasks_html = ""
-                if task['subtasks']:
-                    completed_count = sum(1 for st in task['subtasks'] if st['completed'])
-                    total_count = len(task['subtasks'])
-                    progress = f"({completed_count}/{total_count})"
-                    
-                    subtasks_html = f"<div style='margin-top: 15px; padding: 15px; background: #f3f4f6; border-radius: 8px;'><strong>📋 Sub-tasks {progress}:</strong><ul style='margin: 10px 0; padding-left: 20px;'>"
-                    for subtask in task['subtasks']:
-                        check = "✅" if subtask['completed'] else "☐"
-                        style = "text-decoration: line-through; opacity: 0.6;" if subtask['completed'] else ""
-                        subtasks_html += f"<li style='margin: 8px 0; {style}'>{check} {subtask['title']}</li>"
-                    subtasks_html += "</ul></div>"
-                
-                business_html += f"""
-                <div style="background: #f9fafb; padding: 20px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid {color};">
-                    <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 15px;">
-                        <h3 style="margin: 0; color: #1f2937; font-size: 18px;">{overdue_badge}{task['title']}</h3>
-                        <span style="background: #e5e7eb; color: #374151; padding: 6px 10px; border-radius: 12px; font-size: 12px; font-weight: 600;">
-                            {task['priority'].upper()}
-                        </span>
-                    </div>
-                    
-                    <p style="margin: 0 0 10px 0; color: #6b7280;">
-                        📅 Due: {task['due_date'] or 'No due date'}<br>
-                        {'📅 Meeting' if task.get('is_meeting') else '✓ Task'}
-                    </p>
-                    
-                    {subtasks_html}
-                    
-                    <div style="display: flex; gap: 10px; margin-top: 15px; flex-wrap: wrap;">
-                        <a href="{base_url}?action=complete&task_id={task['id']}" 
-                           style="background: {color}; color: white; padding: 10px 15px; text-decoration: none; border-radius: 6px; font-size: 13px; font-weight: 600;">
-                            ✅ Complete Task
-                        </a>
-                        <a href="{base_url}?action=postpone&task_id={task['id']}&days=1" 
-                           style="background: #6b7280; color: white; padding: 10px 15px; text-decoration: none; border-radius: 6px; font-size: 13px; font-weight: 600;">
-                            📅 +1 Day
-                        </a>
-                    </div>
-                </div>
-                """
-            
-            business_html += "</div></div>"
-        
-        html_body = f"""
-        <html>
-        <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; max-width: 900px; margin: 0 auto; padding: 20px;">
-            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 12px; text-align: center; margin-bottom: 30px;">
-                <h1 style="color: white; margin: 0; font-size: 28px;">📊 5-Business Dashboard</h1>
-                <p style="color: white; margin: 15px 0 0 0; opacity: 0.9; font-size: 16px;">{today.strftime('%A, %B %d, %Y')} • {total_task_count} pending tasks</p>
-            </div>
-            
-            {business_html}
-            
-            <div style="text-align: center; padding: 25px; margin-top: 30px; background: #f9fafb; border-radius: 12px; border: 2px solid #e5e7eb;">
-                <p style="margin: 0; color: #6b7280; font-size: 14px;">
-                    💡 Daily summaries sent at 8:00 AM AEST<br>
-                    ✅ Click buttons to complete tasks instantly<br>
-                    📋 Sub-tasks help break down complex work
-                </p>
-            </div>
-        </body>
-        </html>
+    def summarize_notes(self, notes, max_tokens=300):
         """
+        Use Claude AI to create a concise summary of task notes.
+        Returns a brief, actionable summary for the reminder email.
+        """
+        if not notes:
+            return "No notes recorded yet."
         
-        return self.send_html_email(self.from_email, subject, html_body, "5-Business daily summary")
+        # Build notes text for AI
+        notes_text = ""
+        for note in notes:
+            source = note.get('source', 'manual')
+            created = note.get('created_at', '')[:10]
+            content = note.get('content', '')
+            
+            if source == 'email':
+                subject = note.get('source_email_subject', 'Email')
+                notes_text += f"[{created}] Email - {subject}: {content}\n"
+            else:
+                notes_text += f"[{created}] {source}: {content}\n"
+        
+        try:
+            response = self.anthropic.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=max_tokens,
+                messages=[{
+                    "role": "user",
+                    "content": f"""Summarize these task notes in 2-3 sentences. Focus on:
+1. Key client requests or requirements
+2. Current status/progress
+3. Next actions needed
+
+Be concise and actionable. Use bullet points only if there are distinct items.
+
+NOTES:
+{notes_text}
+
+SUMMARY:"""
+                }]
+            )
+            
+            summary = response.content[0].text.strip()
+            print(f"🤖 AI Summary generated ({len(summary)} chars)")
+            return summary
+            
+        except Exception as e:
+            print(f"⚠️ AI summarization failed: {e}")
+            # Fallback: return last note content
+            if notes:
+                return f"Latest: {notes[0].get('content', '')[:200]}"
+            return "Unable to generate summary."
     
-    def send_html_email(self, to_email: str, subject: str, html_body: str, plain_body: str) -> bool:
-        """Send HTML email using Resend API"""
-        import requests
-        import time
-        import os
-        
-        resend_api_key = os.getenv('RESEND_API_KEY')
-        from_email = 'rob@cloudcleanenergy.com.au'
-        
-        print(f"📧 Sending via Resend API: '{subject[:50]}...' to {to_email}")
+    # ========================================
+    # EMAIL SENDING (Resend API)
+    # ========================================
+    
+    def send_html_email(self, to_email, subject, html_content, plain_text):
+        """Send email via Resend API"""
+        print(f"📧 Sending: '{subject[:50]}...' to {to_email}")
         
         try:
             response = requests.post(
                 'https://api.resend.com/emails',
                 headers={
-                    'Authorization': f'Bearer {resend_api_key}',
+                    'Authorization': f'Bearer {self.resend_api_key}',
                     'Content-Type': 'application/json'
                 },
                 json={
-                    'from': from_email,
+                    'from': self.from_email,
                     'to': [to_email],
                     'subject': subject,
-                    'html': html_body
+                    'html': html_content,
+                    'text': plain_text
                 },
-                timeout=10
+                timeout=30
             )
             
             if response.status_code == 200:
                 result = response.json()
-                print(f"✅ Email sent! ID: {result.get('id')}")
-                time.sleep(0.6)  # Rate limit: 2 req/sec
+                print(f"✅ Email sent! ID: {result.get('id', 'unknown')}")
                 return True
             else:
-                print(f"❌ Error {response.status_code}: {response.text}")
+                print(f"❌ Email failed ({response.status_code}): {response.text}")
                 return False
+                
         except Exception as e:
-            print(f"❌ Error: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"❌ Email exception: {e}")
             return False
+    
+    # ========================================
+    # ENHANCED REMINDER EMAIL
+    # ========================================
+    
+    def send_task_reminder(self, task, due_time, action_url):
+        """
+        Send enhanced reminder email with:
+        - AI summary of notes
+        - Last 10 notes history
+        - Project status with color
+        - Status change buttons
+        """
+        task_id = task['id']
+        
+        # Get notes and generate AI summary
+        notes = self.tm.get_task_notes(task_id, limit=10)
+        all_notes = self.tm.get_all_task_notes(task_id)
+        ai_summary = self.summarize_notes(all_notes)
+        
+        # Get status info
+        status_info = task.get('project_statuses', {})
+        status_name = status_info.get('name', 'Unknown')
+        status_color = status_info.get('color', '#6b7280')
+        status_emoji = status_info.get('emoji', '📋')
+        
+        # Get client info
+        client_name = task.get('client_name', 'Unknown Client')
+        client_email = task.get('client_email', '')
+        project_name = task.get('project_name', task.get('title', 'Project'))
+        
+        # Build notes HTML
+        notes_html = self._build_notes_html(notes)
+        
+        # Build status buttons HTML
+        status_buttons_html = self._build_status_buttons_html(task_id, action_url)
+        
+        # Build complete HTML email
+        html = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+             padding: 20px; 
+             max-width: 650px; 
+             margin: 0 auto;
+             background-color: #f9fafb;">
 
+<!-- Header with Status -->
+<div style="background: linear-gradient(135deg, {status_color}22, {status_color}11); 
+            border-left: 4px solid {status_color}; 
+            padding: 20px; 
+            margin-bottom: 20px; 
+            border-radius: 8px;">
+    
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+        <h2 style="color: #111827; margin: 0; font-size: 20px;">
+            ⏰ Task Reminder
+        </h2>
+        <span style="background: {status_color}; 
+                     color: white; 
+                     padding: 6px 12px; 
+                     border-radius: 20px; 
+                     font-size: 12px;
+                     font-weight: 600;">
+            {status_emoji} {status_name}
+        </span>
+    </div>
+</div>
+
+<!-- Task Title & Client -->
+<div style="background: white; 
+            padding: 20px; 
+            border-radius: 8px; 
+            margin-bottom: 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+    
+    <div style="font-size: 22px; 
+                font-weight: bold; 
+                color: #111827;
+                margin-bottom: 10px;">
+        {task['title']}
+    </div>
+    
+    <div style="display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 15px;">
+        <div style="color: #6b7280; font-size: 14px;">
+            <strong>👤 Client:</strong> {client_name}
+            {f'<br><span style="color: #9ca3af;">{client_email}</span>' if client_email else ''}
+        </div>
+        <div style="color: #ef4444; font-size: 14px;">
+            <strong>⏰ Due:</strong> {due_time.strftime('%I:%M %p AEST')}
+        </div>
+    </div>
+    
+    {f'''<div style="color: #374151; font-size: 14px;">
+        <strong>📁 Project:</strong> {project_name}
+    </div>''' if project_name else ''}
+</div>
+
+<!-- AI Summary -->
+<div style="background: #eff6ff; 
+            border: 1px solid #bfdbfe;
+            padding: 20px; 
+            border-radius: 8px; 
+            margin-bottom: 20px;">
+    
+    <div style="font-weight: 600; 
+                color: #1e40af; 
+                margin-bottom: 10px;
+                font-size: 14px;">
+        🤖 AI Summary
+    </div>
+    <div style="color: #1e3a8a; 
+                font-size: 15px; 
+                line-height: 1.6;">
+        {ai_summary}
+    </div>
+</div>
+
+<!-- Notes History -->
+{notes_html}
+
+<!-- Action Buttons -->
+<div style="background: white; 
+            padding: 20px; 
+            border-radius: 8px; 
+            margin-bottom: 15px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+    
+    <div style="font-weight: 600; 
+                color: #374151; 
+                margin-bottom: 15px;
+                font-size: 14px;">
+        ⚡ Quick Actions
+    </div>
+    
+    <div style="margin-bottom: 15px;">
+        <a href="{action_url}?action=complete&task_id={task_id}" 
+           style="display: inline-block; 
+                  padding: 12px 24px; 
+                  margin: 5px; 
+                  background: #10b981; 
+                  color: white; 
+                  text-decoration: none; 
+                  border-radius: 6px; 
+                  font-weight: 600;
+                  font-size: 14px;">
+            ✅ Complete Task
+        </a>
+        
+        <a href="{action_url}?action=delay_1hour&task_id={task_id}" 
+           style="display: inline-block; 
+                  padding: 12px 24px; 
+                  margin: 5px; 
+                  background: #6b7280; 
+                  color: white; 
+                  text-decoration: none; 
+                  border-radius: 6px; 
+                  font-weight: 600;
+                  font-size: 14px;">
+            ⏰ +1 Hour
+        </a>
+        
+        <a href="{action_url}?action=delay_1day&task_id={task_id}" 
+           style="display: inline-block; 
+                  padding: 12px 24px; 
+                  margin: 5px; 
+                  background: #6b7280; 
+                  color: white; 
+                  text-decoration: none; 
+                  border-radius: 6px; 
+                  font-weight: 600;
+                  font-size: 14px;">
+            📅 +1 Day
+        </a>
+    </div>
+</div>
+
+<!-- Status Change Buttons -->
+{status_buttons_html}
+
+<!-- Footer -->
+<div style="text-align: center; 
+            color: #9ca3af; 
+            font-size: 12px; 
+            padding-top: 20px;">
+    Rob's AI Task Manager • Cloud Clean Energy
+</div>
+
+</body>
+</html>"""
+
+        # Build plain text version
+        plain = f"""⏰ TASK REMINDER
+
+📋 {task['title']}
+👤 Client: {client_name}
+⏰ Due: {due_time.strftime('%I:%M %p AEST')}
+📊 Status: {status_emoji} {status_name}
+
+🤖 AI SUMMARY:
+{ai_summary}
+
+📝 RECENT NOTES:
+{self._build_notes_plain(notes)}
+
+ACTIONS:
+- Complete: {action_url}?action=complete&task_id={task_id}
+- +1 Hour: {action_url}?action=delay_1hour&task_id={task_id}
+- +1 Day: {action_url}?action=delay_1day&task_id={task_id}
+- Next Stage: {action_url}?action=next_status&task_id={task_id}
+- Previous Stage: {action_url}?action=prev_status&task_id={task_id}
+"""
+
+        subject = f"⏰ {status_emoji} {task['title'][:40]} | {client_name}"
+        
+        return self.send_html_email(
+            'rob@cloudcleanenergy.com.au',
+            subject,
+            html,
+            plain
+        )
+    
+    def _build_notes_html(self, notes):
+        """Build HTML for notes history section"""
+        if not notes:
+            return """
+<div style="background: #f3f4f6; 
+            padding: 15px; 
+            border-radius: 8px; 
+            margin-bottom: 20px;
+            text-align: center;
+            color: #6b7280;">
+    No notes recorded yet
+</div>"""
+        
+        notes_items = ""
+        for note in notes:
+            created = note.get('created_at', '')
+            if created:
+                try:
+                    dt = datetime.fromisoformat(created.replace('Z', '+00:00'))
+                    created_str = dt.strftime('%d/%m %I:%M %p')
+                except:
+                    created_str = created[:16]
+            else:
+                created_str = "Unknown"
+            
+            source = note.get('source', 'manual')
+            content = note.get('content', '')[:300]
+            
+            # Source icon and color
+            if source == 'email':
+                icon = "📧"
+                bg = "#fef3c7"
+                border = "#fbbf24"
+            elif source == 'system':
+                icon = "⚙️"
+                bg = "#f3f4f6"
+                border = "#9ca3af"
+            else:
+                icon = "📝"
+                bg = "#ecfdf5"
+                border = "#10b981"
+            
+            notes_items += f"""
+<div style="background: {bg}; 
+            border-left: 3px solid {border};
+            padding: 12px 15px; 
+            margin-bottom: 10px;
+            border-radius: 0 6px 6px 0;">
+    <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+        <span style="font-weight: 600; font-size: 12px; color: #374151;">
+            {icon} {source.title()}
+        </span>
+        <span style="font-size: 11px; color: #6b7280;">
+            {created_str}
+        </span>
+    </div>
+    <div style="font-size: 14px; color: #1f2937; line-height: 1.5;">
+        {content}
+    </div>
+</div>"""
+        
+        return f"""
+<div style="background: white; 
+            padding: 20px; 
+            border-radius: 8px; 
+            margin-bottom: 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+    
+    <div style="font-weight: 600; 
+                color: #374151; 
+                margin-bottom: 15px;
+                font-size: 14px;">
+        📝 Recent Notes ({len(notes)})
+    </div>
+    
+    {notes_items}
+</div>"""
+    
+    def _build_notes_plain(self, notes):
+        """Build plain text version of notes"""
+        if not notes:
+            return "No notes recorded yet"
+        
+        lines = []
+        for note in notes:
+            created = note.get('created_at', '')[:10]
+            source = note.get('source', 'manual')
+            content = note.get('content', '')[:100]
+            lines.append(f"[{created}] {source}: {content}")
+        
+        return "\n".join(lines)
+    
+    def _build_status_buttons_html(self, task_id, action_url):
+        """Build HTML for status change buttons"""
+        return f"""
+<div style="background: white; 
+            padding: 20px; 
+            border-radius: 8px; 
+            margin-bottom: 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+    
+    <div style="font-weight: 600; 
+                color: #374151; 
+                margin-bottom: 15px;
+                font-size: 14px;">
+        📊 Change Project Status
+    </div>
+    
+    <div>
+        <a href="{action_url}?action=prev_status&task_id={task_id}" 
+           style="display: inline-block; 
+                  padding: 10px 20px; 
+                  margin: 5px; 
+                  background: #f3f4f6; 
+                  color: #374151; 
+                  text-decoration: none; 
+                  border-radius: 6px; 
+                  font-weight: 600;
+                  font-size: 13px;
+                  border: 1px solid #e5e7eb;">
+            ⬅️ Previous Stage
+        </a>
+        
+        <a href="{action_url}?action=next_status&task_id={task_id}" 
+           style="display: inline-block; 
+                  padding: 10px 20px; 
+                  margin: 5px; 
+                  background: #3b82f6; 
+                  color: white; 
+                  text-decoration: none; 
+                  border-radius: 6px; 
+                  font-weight: 600;
+                  font-size: 13px;">
+            ➡️ Next Stage
+        </a>
+    </div>
+</div>"""
+    
+    # ========================================
+    # DAILY SUMMARY (Enhanced)
+    # ========================================
+    
+    def send_enhanced_daily_summary(self):
+        """Send daily summary email with project status breakdown"""
+        print("📊 Generating enhanced daily summary...")
+        
+        try:
+            # Get all pending tasks
+            result = self.tm.supabase.table('tasks')\
+                .select('*, project_statuses(*)')\
+                .eq('status', 'pending')\
+                .order('due_date')\
+                .execute()
+            
+            tasks = result.data
+            
+            if not tasks:
+                print("   ℹ️ No pending tasks for summary")
+                return
+            
+            # Group by status
+            by_status = {}
+            for task in tasks:
+                status = task.get('project_statuses', {})
+                status_name = status.get('name', 'Unknown')
+                if status_name not in by_status:
+                    by_status[status_name] = {
+                        'tasks': [],
+                        'color': status.get('color', '#6b7280'),
+                        'emoji': status.get('emoji', '📋'),
+                        'order': status.get('display_order', 99)
+                    }
+                by_status[status_name]['tasks'].append(task)
+            
+            # Build HTML
+            html = self._build_daily_summary_html(by_status, len(tasks))
+            plain = self._build_daily_summary_plain(by_status, len(tasks))
+            
+            now = datetime.now(self.aest)
+            subject = f"📊 Daily Summary - {len(tasks)} Tasks | {now.strftime('%d %b %Y')}"
+            
+            self.send_html_email(
+                'rob@cloudcleanenergy.com.au',
+                subject,
+                html,
+                plain
+            )
+            
+            print(f"✅ Daily summary sent ({len(tasks)} tasks)")
+            
+        except Exception as e:
+            print(f"❌ Daily summary error: {e}")
+    
+    def _build_daily_summary_html(self, by_status, total_count):
+        """Build HTML for daily summary"""
+        now = datetime.now(self.aest)
+        
+        # Status sections
+        status_sections = ""
+        for status_name in sorted(by_status.keys(), key=lambda x: by_status[x]['order']):
+            info = by_status[status_name]
+            tasks = info['tasks']
+            color = info['color']
+            emoji = info['emoji']
+            
+            tasks_html = ""
+            for task in tasks[:5]:  # Show max 5 per status
+                client = task.get('client_name', 'Unknown')
+                due = task.get('due_date', 'No date')
+                tasks_html += f"""
+<div style="padding: 10px; 
+            background: #f9fafb; 
+            border-radius: 4px; 
+            margin-bottom: 8px;
+            font-size: 14px;">
+    <div style="font-weight: 600; color: #111827;">{task['title'][:50]}</div>
+    <div style="color: #6b7280; font-size: 12px;">👤 {client} • 📅 {due}</div>
+</div>"""
+            
+            if len(tasks) > 5:
+                tasks_html += f"""
+<div style="color: #6b7280; font-size: 12px; text-align: center;">
+    +{len(tasks) - 5} more...
+</div>"""
+            
+            status_sections += f"""
+<div style="background: white; 
+            border-radius: 8px; 
+            margin-bottom: 15px;
+            overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+    <div style="background: {color}; 
+                color: white; 
+                padding: 12px 15px;
+                font-weight: 600;">
+        {emoji} {status_name} ({len(tasks)})
+    </div>
+    <div style="padding: 15px;">
+        {tasks_html}
+    </div>
+</div>"""
+        
+        return f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+             padding: 20px; 
+             max-width: 650px; 
+             margin: 0 auto;
+             background-color: #f9fafb;">
+
+<div style="background: linear-gradient(135deg, #3b82f6, #1d4ed8); 
+            color: white; 
+            padding: 25px; 
+            border-radius: 12px; 
+            margin-bottom: 20px;
+            text-align: center;">
+    <h1 style="margin: 0 0 10px 0; font-size: 24px;">📊 Daily Task Summary</h1>
+    <div style="font-size: 14px; opacity: 0.9;">{now.strftime('%A, %d %B %Y')}</div>
+    <div style="font-size: 32px; font-weight: bold; margin-top: 15px;">{total_count}</div>
+    <div style="font-size: 14px; opacity: 0.8;">Pending Tasks</div>
+</div>
+
+{status_sections}
+
+<div style="text-align: center; 
+            color: #9ca3af; 
+            font-size: 12px; 
+            padding-top: 20px;">
+    Rob's AI Task Manager • Cloud Clean Energy
+</div>
+
+</body>
+</html>"""
+    
+    def _build_daily_summary_plain(self, by_status, total_count):
+        """Build plain text daily summary"""
+        now = datetime.now(self.aest)
+        lines = [
+            f"📊 DAILY TASK SUMMARY",
+            f"{now.strftime('%A, %d %B %Y')}",
+            f"Total Pending: {total_count}",
+            "",
+        ]
+        
+        for status_name in sorted(by_status.keys(), key=lambda x: by_status[x]['order']):
+            info = by_status[status_name]
+            lines.append(f"\n{info['emoji']} {status_name} ({len(info['tasks'])})")
+            for task in info['tasks'][:5]:
+                lines.append(f"  - {task['title'][:40]}")
+        
+        return "\n".join(lines)
+
+
+# ========================================
+# STANDALONE TESTING
+# ========================================
+
+if __name__ == "__main__":
+    from dotenv import load_dotenv
+    load_dotenv()
+    
+    etm = EnhancedTaskManager()
+    
+    # Test AI summarization
+    test_notes = [
+        {'content': 'Client called about 10kW solar system quote', 'source': 'email', 'created_at': '2025-11-27T10:00:00'},
+        {'content': 'Sent initial quote $12,500', 'source': 'manual', 'created_at': '2025-11-27T14:00:00'},
+        {'content': 'Client interested in battery storage too', 'source': 'email', 'created_at': '2025-11-28T09:00:00'},
+    ]
+    
+    print("\n🤖 Testing AI Summarization:")
+    summary = etm.summarize_notes(test_notes)
+    print(f"Summary: {summary}")

@@ -1,230 +1,502 @@
-#!/usr/bin/env python3
 """
-Multi-Business Task Management System
-Uses Supabase for database and Zoho Mail for notifications
+Task Manager - Enhanced with Notes & Project Status Support
+Updated: November 28, 2025
 """
 
 import os
-import sys
-from datetime import datetime, timedelta, date
-from typing import List, Optional, Dict
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+from datetime import datetime, date, timedelta
 from supabase import create_client, Client
-from anthropic import Anthropic
-from dotenv import load_dotenv
-
-# Load environment variables
-load_dotenv()
+import pytz
 
 class TaskManager:
     def __init__(self):
-        # Initialize Supabase
-        supabase_url = os.getenv('SUPABASE_URL')
-        supabase_key = os.getenv('SUPABASE_KEY')
+        url = os.getenv('SUPABASE_URL')
+        key = os.getenv('SUPABASE_KEY')
         
-        if not supabase_url or not supabase_key:
-            raise ValueError("SUPABASE_URL and SUPABASE_KEY must be set in .env file")
+        if not url or not key:
+            raise ValueError("SUPABASE_URL and SUPABASE_KEY must be set")
         
-        self.supabase: Client = create_client(supabase_url, supabase_key)
+        self.supabase: Client = create_client(url, key)
+        self.aest = pytz.timezone('Australia/Brisbane')
         
-        # Initialize Anthropic
-        anthropic_key = os.getenv('ANTHROPIC_API_KEY')
-        if anthropic_key:
-            self.claude = Anthropic(api_key=anthropic_key)
-        else:
-            self.claude = None
-        
-        # Zoho Mail settings (Australian servers)
-        self.smtp_server = "smtp.zoho.com.au"
-        self.smtp_port = 465
-        self.from_email = "rob@cloudcleanenergy.com.au"
-        self.smtp_password = os.getenv('ZOHO_PASSWORD')
+        # Cache project statuses on init
+        self.statuses = self.load_project_statuses()
+        print(f"📊 Loaded {len(self.statuses)} project statuses")
     
-    def get_businesses(self, active_only: bool = True) -> List[Dict]:
-        """Get all businesses"""
-        query = self.supabase.table('businesses').select('*')
-        if active_only:
-            query = query.eq('active', True)
-        
-        result = query.order('name').execute()
-        return result.data
+    # ========================================
+    # PROJECT STATUS METHODS
+    # ========================================
     
-    def get_business_by_name(self, name: str) -> Optional[Dict]:
-        """Get a business by name"""
-        result = self.supabase.table('businesses').select('*').eq('name', name).execute()
-        return result.data[0] if result.data else None
-    
-    def get_business_by_id(self, business_id: str) -> Optional[Dict]:
-        """Get a business by ID"""
-        result = self.supabase.table('businesses').select('*').eq('id', business_id).execute()
-        return result.data[0] if result.data else None
-    
-    def send_html_email(self, to_email: str, subject: str, html_body: str, plain_body: str) -> bool:
-        """Send HTML email with plain text fallback via Zoho Mail SMTP"""
-        if not self.smtp_password:
-            print("❌ Zoho password not configured. Set ZOHO_PASSWORD in .env file")
-            return False
-        
+    def load_project_statuses(self):
+        """Load all project statuses into memory (graceful if table doesn't exist)"""
         try:
-            msg = MIMEMultipart('alternative')
-            msg['From'] = self.from_email
-            msg['To'] = to_email
-            msg['Subject'] = subject
+            result = self.supabase.table('project_statuses')\
+                .select('*')\
+                .order('display_order')\
+                .execute()
+            return {s['id']: s for s in result.data}
+        except Exception as e:
+            # Table might not exist yet - that's OK, system still works
+            print(f"⚠️ Could not load statuses (run database migration): {e}")
+            return {}
+    
+    def statuses_available(self):
+        """Check if project statuses are configured"""
+        return len(self.statuses) > 0
+    
+    def get_status_by_name(self, name):
+        """Get status by name (case-insensitive)"""
+        for status in self.statuses.values():
+            if status['name'].lower() == name.lower():
+                return status
+        return None
+    
+    def get_default_status_id(self):
+        """Get the first status (Remember to Callback)"""
+        for status in self.statuses.values():
+            if status['display_order'] == 1:
+                return status['id']
+        # Fallback: return first status
+        if self.statuses:
+            return list(self.statuses.keys())[0]
+        return None
+    
+    def get_next_status(self, current_status_id):
+        """Get the next status in workflow"""
+        if current_status_id not in self.statuses:
+            return None
+        
+        current_order = self.statuses[current_status_id]['display_order']
+        
+        for status in self.statuses.values():
+            if status['display_order'] == current_order + 1:
+                return status
+        return None  # Already at last status
+    
+    def get_previous_status(self, current_status_id):
+        """Get the previous status in workflow"""
+        if current_status_id not in self.statuses:
+            return None
+        
+        current_order = self.statuses[current_status_id]['display_order']
+        
+        for status in self.statuses.values():
+            if status['display_order'] == current_order - 1:
+                return status
+        return None  # Already at first status
+    
+    def update_task_status(self, task_id, new_status_id):
+        """Update task's project status"""
+        try:
+            result = self.supabase.table('tasks')\
+                .update({'project_status_id': new_status_id})\
+                .eq('id', task_id)\
+                .execute()
             
-            # Attach both plain and HTML versions
-            msg.attach(MIMEText(plain_body, 'plain'))
-            msg.attach(MIMEText(html_body, 'html'))
+            if result.data:
+                status = self.statuses.get(new_status_id, {})
+                print(f"✅ Task status updated to: {status.get('name', 'Unknown')}")
+                return True
+            return False
+        except Exception as e:
+            print(f"❌ Error updating status: {e}")
+            return False
+    
+    def move_task_to_next_status(self, task_id):
+        """Move task to next stage in workflow"""
+        task = self.get_task(task_id)
+        if not task:
+            return False, "Task not found"
+        
+        next_status = self.get_next_status(task.get('project_status_id'))
+        if not next_status:
+            return False, "Already at final status"
+        
+        success = self.update_task_status(task_id, next_status['id'])
+        return success, next_status['name'] if success else "Update failed"
+    
+    def move_task_to_previous_status(self, task_id):
+        """Move task to previous stage in workflow"""
+        task = self.get_task(task_id)
+        if not task:
+            return False, "Task not found"
+        
+        prev_status = self.get_previous_status(task.get('project_status_id'))
+        if not prev_status:
+            return False, "Already at first status"
+        
+        success = self.update_task_status(task_id, prev_status['id'])
+        return success, prev_status['name'] if success else "Update failed"
+    
+    # ========================================
+    # TASK NOTES METHODS
+    # ========================================
+    
+    def add_note(self, task_id, content, source='manual', email_subject=None, 
+                 email_from=None, email_date=None):
+        """Add a note to a task (graceful if table doesn't exist)"""
+        try:
+            note_data = {
+                'task_id': task_id,
+                'content': content,
+                'source': source,
+                'created_by': 'system'
+            }
             
-            server = smtplib.SMTP_SSL(self.smtp_server, self.smtp_port)
-            server.login(self.from_email, self.smtp_password)
-            server.send_message(msg)
-            server.quit()
+            if email_subject:
+                note_data['source_email_subject'] = email_subject
+            if email_from:
+                note_data['source_email_from'] = email_from
+            if email_date:
+                note_data['source_email_date'] = email_date
             
-            print(f"✅ HTML email sent successfully to {to_email}")
-            return True
+            result = self.supabase.table('task_notes')\
+                .insert(note_data)\
+                .execute()
+            
+            if result.data:
+                print(f"📝 Note added to task (source: {source})")
+                return result.data[0]
+            return None
+        except Exception as e:
+            # Table might not exist yet - log but don't crash
+            if 'task_notes' in str(e):
+                print(f"⚠️ Notes table not ready (run database migration)")
+            else:
+                print(f"❌ Error adding note: {e}")
+            return None
+    
+    def get_task_notes(self, task_id, limit=10):
+        """Get notes for a task (graceful if table doesn't exist)"""
+        try:
+            result = self.supabase.table('task_notes')\
+                .select('*')\
+                .eq('task_id', task_id)\
+                .order('created_at', desc=True)\
+                .limit(limit)\
+                .execute()
+            return result.data
+        except Exception as e:
+            # Table might not exist yet
+            if 'task_notes' in str(e):
+                return []  # Graceful fallback
+            print(f"❌ Error getting notes: {e}")
+            return []
+    
+    def get_all_task_notes(self, task_id):
+        """Get ALL notes for a task (for AI summarization)"""
+        try:
+            result = self.supabase.table('task_notes')\
+                .select('*')\
+                .eq('task_id', task_id)\
+                .order('created_at', desc=False)\
+                .execute()
+            return result.data
+        except Exception as e:
+            # Table might not exist yet
+            return []
+    
+    # ========================================
+    # CLIENT MATCHING METHODS
+    # ========================================
+    
+    def find_existing_task_by_client(self, client_email=None, client_name=None, 
+                                      project_name=None):
+        """
+        Find existing task by client identifiers.
+        Priority: email > project_name > client_name
+        Returns most recent non-closed task for this client.
+        """
+        try:
+            # Try email match first (most reliable)
+            if client_email:
+                result = self.supabase.table('tasks')\
+                    .select('*, project_statuses!inner(name)')\
+                    .eq('client_email', client_email.lower())\
+                    .neq('status', 'completed')\
+                    .order('created_at', desc=True)\
+                    .limit(1)\
+                    .execute()
+                
+                if result.data:
+                    print(f"🔗 Found existing task by email: {client_email}")
+                    return result.data[0]
+            
+            # Try project name match
+            if project_name:
+                result = self.supabase.table('tasks')\
+                    .select('*')\
+                    .ilike('project_name', f'%{project_name}%')\
+                    .neq('status', 'completed')\
+                    .order('created_at', desc=True)\
+                    .limit(1)\
+                    .execute()
+                
+                if result.data:
+                    print(f"🔗 Found existing task by project: {project_name}")
+                    return result.data[0]
+            
+            # Try client name match (fuzzy)
+            if client_name and len(client_name) > 2:
+                result = self.supabase.table('tasks')\
+                    .select('*')\
+                    .ilike('client_name', f'%{client_name}%')\
+                    .neq('status', 'completed')\
+                    .order('created_at', desc=True)\
+                    .limit(1)\
+                    .execute()
+                
+                if result.data:
+                    print(f"🔗 Found existing task by name: {client_name}")
+                    return result.data[0]
+            
+            return None
             
         except Exception as e:
-            print(f"❌ Failed to send email: {e}")
+            print(f"⚠️ Error finding existing task: {e}")
+            return None
+    
+    # ========================================
+    # TASK CRUD METHODS (Enhanced)
+    # ========================================
+    
+    def create_task(self, business_id, title, description=None, due_date=None,
+                    due_time=None, priority='medium', is_meeting=False,
+                    client_name=None, client_email=None, client_phone=None,
+                    project_name=None, initial_note=None, note_source='manual'):
+        """
+        Create a new task with optional client info and initial note.
+        Backwards compatible - works even without new database columns.
+        """
+        try:
+            # Core task data (always works)
+            task_data = {
+                'business_id': business_id,
+                'title': title,
+                'description': description,
+                'due_date': due_date or date.today().isoformat(),
+                'due_time': due_time or '08:00:00',
+                'priority': priority,
+                'status': 'pending',
+                'is_meeting': is_meeting
+            }
+            
+            # Add project status if available
+            if self.statuses_available():
+                default_status = self.get_default_status_id()
+                if default_status:
+                    task_data['project_status_id'] = default_status
+            
+            # Add client info if provided (may fail if columns don't exist yet)
+            try:
+                if client_name:
+                    task_data['client_name'] = client_name
+                if client_email:
+                    task_data['client_email'] = client_email.lower()
+                if client_phone:
+                    task_data['client_phone'] = client_phone
+                if project_name:
+                    task_data['project_name'] = project_name
+            except Exception:
+                pass  # Columns might not exist yet
+            
+            # Insert task
+            result = self.supabase.table('tasks')\
+                .insert(task_data)\
+                .execute()
+            
+            if result.data:
+                task = result.data[0]
+                print(f"✅ Task created: {title}")
+                
+                # Add initial note if provided (may fail if table doesn't exist)
+                if initial_note:
+                    self.add_note(
+                        task_id=task['id'],
+                        content=initial_note,
+                        source=note_source
+                    )
+                
+                return task
+            return None
+            
+        except Exception as e:
+            print(f"❌ Error creating task: {e}")
+            
+            # Fallback: try with minimal data (backwards compatible)
+            try:
+                minimal_data = {
+                    'business_id': business_id,
+                    'title': title,
+                    'description': description,
+                    'due_date': due_date or date.today().isoformat(),
+                    'due_time': due_time or '08:00:00',
+                    'priority': priority,
+                    'status': 'pending',
+                    'is_meeting': is_meeting
+                }
+                result = self.supabase.table('tasks').insert(minimal_data).execute()
+                if result.data:
+                    print(f"✅ Task created (minimal mode): {title}")
+                    return result.data[0]
+            except Exception as e2:
+                print(f"❌ Fallback also failed: {e2}")
+            
+            return None
+    
+    def get_task(self, task_id):
+        """Get a single task by ID with status info"""
+        try:
+            result = self.supabase.table('tasks')\
+                .select('*, project_statuses(*)')\
+                .eq('id', task_id)\
+                .single()\
+                .execute()
+            return result.data
+        except Exception as e:
+            print(f"❌ Error getting task: {e}")
+            return None
+    
+    def get_task_with_notes(self, task_id, note_limit=10):
+        """Get task with its recent notes"""
+        task = self.get_task(task_id)
+        if task:
+            task['notes'] = self.get_task_notes(task_id, limit=note_limit)
+        return task
+    
+    def get_pending_tasks_due_today(self):
+        """Get all pending tasks due today with status info"""
+        try:
+            today = date.today().isoformat()
+            result = self.supabase.table('tasks')\
+                .select('*, project_statuses(*)')\
+                .eq('status', 'pending')\
+                .eq('due_date', today)\
+                .order('due_time')\
+                .execute()
+            return result.data
+        except Exception as e:
+            print(f"❌ Error getting tasks: {e}")
+            return []
+    
+    def complete_task(self, task_id):
+        """Mark task as completed"""
+        try:
+            now = datetime.now(self.aest).isoformat()
+            result = self.supabase.table('tasks')\
+                .update({
+                    'status': 'completed',
+                    'completed_at': now
+                })\
+                .eq('id', task_id)\
+                .execute()
+            
+            if result.data:
+                # Add completion note
+                self.add_note(
+                    task_id=task_id,
+                    content='Task marked as completed',
+                    source='system'
+                )
+                print(f"✅ Task completed")
+                return True
+            return False
+        except Exception as e:
+            print(f"❌ Error completing task: {e}")
             return False
     
-    def send_task_confirmation_email(self, task_id: str) -> bool:
-        """Send confirmation email with clickable buttons for a task"""
-        # Get task details
-        task_result = self.supabase.table('tasks').select('*').eq('id', task_id).execute()
-        if not task_result.data:
-            print(f"❌ Task {task_id} not found")
+    def delay_task(self, task_id, hours=0, days=0):
+        """Delay task by specified time"""
+        try:
+            task = self.get_task(task_id)
+            if not task:
+                return False
+            
+            # Parse current due date/time
+            current_date = datetime.strptime(task['due_date'], '%Y-%m-%d')
+            
+            if task.get('due_time'):
+                h, m, s = map(int, task['due_time'].split(':'))
+                current_datetime = current_date.replace(hour=h, minute=m, second=s)
+            else:
+                current_datetime = current_date.replace(hour=8, minute=0, second=0)
+            
+            # Make timezone aware
+            current_datetime = self.aest.localize(current_datetime)
+            
+            # Add delay
+            new_datetime = current_datetime + timedelta(hours=hours, days=days)
+            
+            # Update task
+            result = self.supabase.table('tasks')\
+                .update({
+                    'due_date': new_datetime.date().isoformat(),
+                    'due_time': new_datetime.strftime('%H:%M:%S')
+                })\
+                .eq('id', task_id)\
+                .execute()
+            
+            if result.data:
+                # Add note about delay
+                delay_desc = f"{hours} hour(s)" if hours else f"{days} day(s)"
+                self.add_note(
+                    task_id=task_id,
+                    content=f'Task delayed by {delay_desc}. New due: {new_datetime.strftime("%I:%M %p %d/%m/%Y")}',
+                    source='system'
+                )
+                print(f"⏰ Task delayed to {new_datetime.strftime('%I:%M %p')}")
+                return True
             return False
-        
-        task = task_result.data[0]
-        business = self.get_business_by_id(task['business_id'])
-        
-        # Base URL for actions
-        base_url = os.getenv('TASK_ACTION_URL', 'https://placeholder.com/action')
-        
-        task_id_short = task['id'][:8]
-        
-        subject = f"✅ Task Created: {task['title']}"
-        
-        # Create beautiful HTML email
-        html_body = f"""
-        <html>
-        <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 12px 12px 0 0; text-align: center;">
-                <h2 style="color: white; margin: 0;">✅ Task Created Successfully!</h2>
-            </div>
+        except Exception as e:
+            print(f"❌ Error delaying task: {e}")
+            return False
+    
+    def update_task_client_info(self, task_id, client_name=None, client_email=None,
+                                 client_phone=None, project_name=None):
+        """Update client information on existing task"""
+        try:
+            update_data = {}
+            if client_name:
+                update_data['client_name'] = client_name
+            if client_email:
+                update_data['client_email'] = client_email.lower()
+            if client_phone:
+                update_data['client_phone'] = client_phone
+            if project_name:
+                update_data['project_name'] = project_name
             
-            <div style="background: white; padding: 30px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 12px 12px;">
-                <div style="background: #f9fafb; padding: 20px; border-radius: 8px; margin-bottom: 25px; border-left: 4px solid #667eea;">
-                    <h3 style="margin: 0 0 15px 0; color: #1f2937; font-size: 20px;">📋 {task['title']}</h3>
-                    <table style="width: 100%; border-collapse: collapse;">
-                        <tr>
-                            <td style="padding: 8px 0; color: #6b7280; font-weight: 600;">Business:</td>
-                            <td style="padding: 8px 0; color: #1f2937;">{business['name']}</td>
-                        </tr>
-                        <tr>
-                            <td style="padding: 8px 0; color: #6b7280; font-weight: 600;">Due Date:</td>
-                            <td style="padding: 8px 0; color: #1f2937;">{task['due_date']}{' at ' + task['due_time'] if task.get('due_time') else ''}</td>
-                        </tr>
-                        <tr>
-                            <td style="padding: 8px 0; color: #6b7280; font-weight: 600;">Priority:</td>
-                            <td style="padding: 8px 0;">
-                                <span style="background: {'#fee2e2' if task['priority'] == 'urgent' else '#fed7aa' if task['priority'] == 'high' else '#fef08a' if task['priority'] == 'medium' else '#dcfce7'}; 
-                                             color: {'#991b1b' if task['priority'] == 'urgent' else '#9a3412' if task['priority'] == 'high' else '#854d0e' if task['priority'] == 'medium' else '#166534'}; 
-                                             padding: 4px 12px; border-radius: 12px; font-size: 13px; font-weight: 600;">
-                                    {task['priority'].upper()}
-                                </span>
-                            </td>
-                        </tr>
-                        <tr>
-                            <td style="padding: 8px 0; color: #6b7280; font-weight: 600;">Type:</td>
-                            <td style="padding: 8px 0; color: #1f2937;">{'📅 Meeting' if task['is_meeting'] else '✓ Task'}</td>
-                        </tr>
-                        <tr>
-                            <td style="padding: 8px 0; color: #6b7280; font-weight: 600; font-size: 11px;">Task ID:</td>
-                            <td style="padding: 8px 0; color: #9ca3af; font-size: 11px; font-family: monospace;">{task_id_short}</td>
-                        </tr>
-                    </table>
-                    {f'<div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #e5e7eb; color: #4b5563; line-height: 1.6;">{task["description"]}</div>' if task.get('description') else ''}
-                </div>
-                
-                <div style="margin: 30px 0;">
-                    <h3 style="color: #1f2937; margin-bottom: 15px; font-size: 18px;">🔗 Quick Actions</h3>
-                    <p style="color: #6b7280; margin-bottom: 20px;">Click any button to take action on this task:</p>
-                    
-                    <table cellspacing="0" cellpadding="0" style="width: 100%;">
-                        <tr>
-                            <td style="padding: 5px;">
-                                <a href="{base_url}?action=complete&task_id={task['id']}" 
-                                   style="display: block; background: #10b981; color: white; padding: 14px 20px; text-decoration: none; border-radius: 8px; font-weight: 600; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-                                    ✅ Mark Complete
-                                </a>
-                            </td>
-                        </tr>
-                        <tr>
-                            <td style="padding: 5px;">
-                                <a href="{base_url}?action=postpone&task_id={task['id']}&days=1" 
-                                   style="display: block; background: #f59e0b; color: white; padding: 14px 20px; text-decoration: none; border-radius: 8px; font-weight: 600; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-                                    📅 Postpone 1 Day
-                                </a>
-                            </td>
-                        </tr>
-                        <tr>
-                            <td style="padding: 5px;">
-                                <a href="{base_url}?action=postpone&task_id={task['id']}&days=7" 
-                                   style="display: block; background: #f59e0b; color: white; padding: 14px 20px; text-decoration: none; border-radius: 8px; font-weight: 600; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-                                    📅 Postpone 1 Week
-                                </a>
-                            </td>
-                        </tr>
-                        <tr>
-                            <td style="padding: 5px;">
-                                <a href="{base_url}?action=add_followup_form&task_id={task['id']}" 
-                                   style="display: block; background: #6366f1; color: white; padding: 14px 20px; text-decoration: none; border-radius: 8px; font-weight: 600; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-                                    📌 Add Follow-up
-                                </a>
-                            </td>
-                        </tr>
-                    </table>
-                </div>
-            </div>
+            if not update_data:
+                return True
             
-            <div style="text-align: center; padding: 20px; color: #9ca3af; font-size: 12px;">
-                <p style="margin: 0;">Task Management Bot • Powered by Claude AI</p>
-            </div>
-        </body>
-        </html>
-        """
-        
-        # Plain text fallback
-        plain_body = f"""✅ Task Created Successfully!
+            result = self.supabase.table('tasks')\
+                .update(update_data)\
+                .eq('id', task_id)\
+                .execute()
+            
+            return bool(result.data)
+        except Exception as e:
+            print(f"❌ Error updating client info: {e}")
+            return False
 
-TASK DETAILS:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Business: {business['name']}
-Title: {task['title']}
-Due Date: {task['due_date']}{' at ' + task['due_time'] if task.get('due_time') else ''}
-Priority: {task['priority'].upper()}
-Type: {'📅 Meeting' if task['is_meeting'] else '✓ Task'}
-Task ID: {task_id_short}
 
-{('Description: ' + task['description']) if task.get('description') else ''}
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-QUICK ACTIONS (Click these links in your email):
-✅ Mark Complete: {base_url}?action=complete&task_id={task['id']}
-📅 Postpone 1 Day: {base_url}?action=postpone&task_id={task['id']}&days=1
-📅 Postpone 1 Week: {base_url}?action=postpone&task_id={task['id']}&days=7
-📌 Add Follow-up: {base_url}?action=add_followup_form&task_id={task['id']}
-
-💡 Tip: You'll receive a reminder about this task on {task['due_date']}.
-
----
-Task Management Bot • Powered by Claude AI
-"""
-        
-        return self.send_html_email(self.from_email, subject, html_body, plain_body)
+# ========================================
+# STANDALONE TESTING
+# ========================================
 
 if __name__ == "__main__":
-    print("TaskManager library loaded successfully!")
+    from dotenv import load_dotenv
+    load_dotenv()
+    
+    tm = TaskManager()
+    
+    print("\n📊 Project Statuses:")
+    for status in sorted(tm.statuses.values(), key=lambda x: x['display_order']):
+        print(f"  {status['emoji']} {status['name']} (order: {status['display_order']})")
+    
+    print("\n📋 Pending Tasks Today:")
+    tasks = tm.get_pending_tasks_due_today()
+    for task in tasks:
+        status = task.get('project_statuses', {})
+        print(f"  - {task['title']}")
+        print(f"    Status: {status.get('emoji', '📋')} {status.get('name', 'Unknown')}")
+        print(f"    Client: {task.get('client_name', 'N/A')}")

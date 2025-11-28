@@ -1,448 +1,596 @@
-#!/usr/bin/env python3
-"""Cloud Email Processor - FINAL FIXED VERSION"""
-import imaplib
-import email
-from email.header import decode_header
-import json
-import re
-from task_manager import TaskManager
-from anthropic import Anthropic
+"""
+Cloud Email Processor - AI-Powered Client Matching & Email Threading
+Updated: November 28, 2025
+
+Features:
+- Smart client matching (email, name, project)
+- Email threading (adds notes to existing tasks)
+- AI extracts client info from emails
+- Batch processing (newest 10 first)
+- Message-ID deduplication
+"""
+
 import os
 import time
-import schedule
-from datetime import datetime, timedelta, date
+import email
+import imaplib
+import json
+from datetime import datetime, date, timedelta
+from email.header import decode_header
 import pytz
+from anthropic import Anthropic
 
+from task_manager import TaskManager
 from enhanced_task_manager import EnhancedTaskManager
+
 
 class CloudEmailProcessor:
     def __init__(self):
+        print("🚀 Initializing Cloud Email Processor...")
+        
+        # Core services
         self.tm = TaskManager()
-        self.etm = EnhancedTaskManager()
-        self.action_url = os.getenv('TASK_ACTION_URL', 'https://rob-crm-tasks-production.up.railway.app/action')
-        self.your_email = 'rob@cloudcleanenergy.com.au'
-        self.claude = Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
+        self.etm = EnhancedTaskManager(self.tm)
+        self.anthropic = Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
+        
+        # Email config
         self.gmail_user = 'robcrm.ai@gmail.com'
-        self.gmail_pass = os.getenv('GMAIL_APP_PASSWORD', 'sgho tbwr optz yxie')
-        self.businesses = {
-            'Cloud Clean Energy': 'feb14276-5c3d-4fcf-af06-9a8f54cf7159',
-            'DSW (Direct Solar Warehouse)': '390fbfb9-1166-45a5-ba17-39c9c48d5f9a',
-            'KVELL': 'e15518d2-39c2-4503-95bd-cb6f0b686022',
-            'AI Project Pro': 'ec5d7aab-8d74-4ef2-9d92-01b143c68c82',
-            'Veterans Health Centre (VHC)': '0b083ea5-ff45-4606-8cae-6ed387926641'
-        }
+        self.gmail_pass = os.getenv('GMAIL_APP_PASSWORD')
+        self.your_email = 'rob@cloudcleanenergy.com.au'
+        
+        # Action URL for email buttons
+        self.action_url = os.getenv('TASK_ACTION_URL', 
+            'https://rob-crm-tasks-production.up.railway.app/action')
+        
+        # Timezone
+        self.aest = pytz.timezone('Australia/Brisbane')
+        
+        # Load processed emails from database
         self.processed_emails = self.load_processed_emails()
-        print(f"📊 Loaded {len(self.processed_emails)} processed emails from database")
-        if self.processed_emails:
-            sample = list(self.processed_emails)[:2]
-            print(f"   Sample: {sample}")
+        
+        # Default business ID (Cloud Clean Energy)
+        self.default_business_id = 'feb14276-5c3d-4fcf-af06-9a8f54cf7159'
+        
+        print(f"✅ Processor initialized")
+        print(f"📧 Gmail: {self.gmail_user}")
+        print(f"🔗 Action URL: {self.action_url}")
+    
+    # ========================================
+    # EMAIL DEDUPLICATION
+    # ========================================
     
     def load_processed_emails(self):
+        """Load processed email Message-IDs from database"""
         try:
-            result = self.tm.supabase.table("processed_emails").select("email_id").execute()
-            return set(email["email_id"] for email in result.data)
-        except:
+            result = self.tm.supabase.table('processed_emails')\
+                .select('email_id')\
+                .execute()
+            
+            email_ids = set(e['email_id'] for e in result.data)
+            print(f"📊 Loaded {len(email_ids)} processed emails")
+            return email_ids
+            
+        except Exception as e:
+            print(f"⚠️ Error loading processed emails: {e}")
             return set()
-        self.action_url = os.getenv('TASK_ACTION_URL', 'https://rob-crm-tasks-production.up.railway.app/action')
-        self.etm = EnhancedTaskManager()
-        self.action_url = os.getenv('TASK_ACTION_URL', 'https://rob-crm-tasks-production.up.railway.app/action')
-        self.your_email = 'rob@cloudcleanenergy.com.au'
-        print("🌐 Cloud Email Processor initialized!")
+    
+    def mark_email_processed(self, message_id):
+        """Mark email as processed in database"""
+        try:
+            self.tm.supabase.table('processed_emails').insert({
+                'email_id': message_id
+            }).execute()
+            self.processed_emails.add(message_id)
+        except:
+            pass  # Duplicate key - already processed
+    
+    # ========================================
+    # AI CLIENT EXTRACTION & MATCHING
+    # ========================================
+    
+    def extract_client_and_task_info(self, subject, content, sender_email, sender_name):
+        """
+        Use Claude AI to:
+        1. Determine if this is a task-worthy email
+        2. Extract client information
+        3. Identify if this relates to existing project
+        4. Parse task details
+        """
+        prompt = f"""Analyze this email and extract information.
+
+FROM: {sender_name} <{sender_email}>
+SUBJECT: {subject}
+
+CONTENT:
+{content[:2000]}
+
+---
+
+Return a JSON object with these fields:
+
+{{
+    "is_task": true/false,           // Is this something requiring action?
+    "is_followup": true/false,       // Is this a reply/followup to existing conversation?
+    
+    "client_name": "Full Name",      // Best guess at client's full name
+    "client_email": "email@x.com",   // Client's email address
+    "client_phone": "phone",         // Phone number if mentioned (or null)
+    
+    "project_name": "Project Name",  // Project/job name if identifiable (or null)
+    "project_keywords": ["solar", "battery"],  // Keywords to match existing projects
+    
+    "task_title": "Brief task title",
+    "task_description": "What needs to be done",
+    "task_priority": "high/medium/low",
+    
+    "suggested_status": "Remember to Callback/Research/Build Quotation/etc",
+    
+    "due_date": "YYYY-MM-DD",        // Suggested due date (or null for today)
+    "due_time": "HH:MM:SS",          // Suggested time (or null for 09:00:00)
+    
+    "note_content": "Key points from email for notes"
+}}
+
+Rules:
+- is_task = true if email requires any follow-up action
+- Extract client name from signature, email address, or content
+- project_keywords should help match this to existing tasks
+- If "Re:" or "FW:" in subject, is_followup = true
+- suggested_status: Use "Remember to Callback" for new inquiries, 
+  "Build Quotation" for quote requests, "Research" for technical questions
+- note_content should summarize the key points (max 500 chars)
+
+Return ONLY valid JSON, no explanation."""
+
+        try:
+            response = self.anthropic.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=1000,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            text = response.content[0].text.strip()
+            
+            # Clean up JSON if wrapped in code blocks
+            if text.startswith('```'):
+                text = text.split('```')[1]
+                if text.startswith('json'):
+                    text = text[4:]
+            text = text.strip()
+            
+            return json.loads(text)
+            
+        except Exception as e:
+            print(f"⚠️ AI extraction error: {e}")
+            # Return minimal default
+            return {
+                "is_task": True,
+                "is_followup": "re:" in subject.lower(),
+                "client_name": sender_name or sender_email.split('@')[0],
+                "client_email": sender_email,
+                "task_title": subject,
+                "task_description": content[:200],
+                "task_priority": "medium",
+                "suggested_status": "Remember to Callback",
+                "note_content": content[:300]
+            }
+    
+    def find_matching_task(self, extracted_info):
+        """
+        Smart matching to find existing task for this client/project.
+        Uses multiple strategies.
+        """
+        client_email = extracted_info.get('client_email')
+        client_name = extracted_info.get('client_name')
+        project_name = extracted_info.get('project_name')
+        project_keywords = extracted_info.get('project_keywords', [])
+        
+        # Strategy 1: Exact email match
+        existing = self.tm.find_existing_task_by_client(
+            client_email=client_email,
+            client_name=client_name,
+            project_name=project_name
+        )
+        
+        if existing:
+            return existing
+        
+        # Strategy 2: Keyword search in recent tasks
+        if project_keywords:
+            try:
+                for keyword in project_keywords:
+                    result = self.tm.supabase.table('tasks')\
+                        .select('*')\
+                        .neq('status', 'completed')\
+                        .or_(f"title.ilike.%{keyword}%,project_name.ilike.%{keyword}%")\
+                        .order('created_at', desc=True)\
+                        .limit(1)\
+                        .execute()
+                    
+                    if result.data:
+                        # Verify it's the same client (if we have email)
+                        task = result.data[0]
+                        if client_email and task.get('client_email'):
+                            if task['client_email'].lower() == client_email.lower():
+                                print(f"🔗 Found match by keyword: {keyword}")
+                                return task
+                        elif client_name and task.get('client_name'):
+                            if client_name.lower() in task['client_name'].lower():
+                                print(f"🔗 Found match by keyword + name: {keyword}")
+                                return task
+            except Exception as e:
+                print(f"⚠️ Keyword search error: {e}")
+        
+        return None
+    
+    # ========================================
+    # EMAIL PROCESSING
+    # ========================================
     
     def process_emails(self):
+        """Process incoming emails with smart client matching"""
         try:
-            print(f"🔍 Checking emails at {datetime.now()}")
+            print(f"\n🔍 Checking emails at {datetime.now(self.aest).strftime('%I:%M %p')}")
+            
+            # Connect to Gmail
             mail = imaplib.IMAP4_SSL('imap.gmail.com')
             mail.login(self.gmail_user, self.gmail_pass)
-            mail.select('inbox')
-            aest = pytz.timezone('Australia/Brisbane')
-            seven_days_ago = (datetime.now(aest) - timedelta(days=7)).strftime("%d-%b-%Y")
-            status, messages = mail.uid('search', None, f'(SINCE {seven_days_ago})')
-            if not messages[0]:
-                print("📭 No emails in last 7 days")
-                mail.close()
-                mail.logout()
+            mail.select('INBOX')
+            
+            # Search for recent emails (last 7 days)
+            seven_days_ago = (date.today() - timedelta(days=7)).strftime("%d-%b-%Y")
+            status, messages = mail.uid("search", None, f'(SINCE {seven_days_ago})')
+            
+            if status != 'OK':
+                print("   ❌ Failed to search emails")
                 return
+            
             email_ids = messages[0].split()
-            new_count = len([eid for eid in email_ids if eid not in self.processed_emails])
+            
+            # Count new emails
+            new_count = len([eid for eid in email_ids if eid.decode() not in self.processed_emails])
+            
             if new_count == 0:
-                print("📭 No new emails (all already processed)")
+                print("📭 No new emails")
                 mail.close()
                 mail.logout()
                 return
-            print(f"📬 Found {new_count} new emails to process")
+            
+            print(f"📬 Found {len(email_ids)} total ({new_count} new)")
+            
+            # Process NEWEST 10 emails first (critical fix from Nov 12)
+            processed_count = 0
             for msg_id in reversed(email_ids[-10:]):
-                # Extract Message-ID first to check if processed
-                status, msg_data = mail.uid("fetch", msg_id, '(RFC822)')
-                email_body = email.message_from_bytes(msg_data[0][1])
-                message_id = email_body.get('Message-ID', str(msg_id))
+                msg_id_str = msg_id.decode() if isinstance(msg_id, bytes) else str(msg_id)
                 
+                # Fetch email
+                status, msg_data = mail.uid("fetch", msg_id, '(RFC822)')
+                if status != 'OK':
+                    continue
+                
+                email_body = email.message_from_bytes(msg_data[0][1])
+                message_id = email_body.get('Message-ID', msg_id_str)
+                
+                # Skip if already processed
                 if message_id in self.processed_emails:
                     continue
                 
-                message_id = self.process_single_email(mail, msg_id, message_id)
-                if message_id:
-                    self.processed_emails.add(message_id)
-                    try:
-                        self.tm.supabase.table("processed_emails").insert({"email_id": message_id}).execute()
-                    except:
-                        pass
+                # Process this email
+                self.process_single_email(email_body, message_id)
+                processed_count += 1
+                
+                # Mark as processed
+                self.mark_email_processed(message_id)
+            
+            print(f"✅ Processed {processed_count} emails")
+            
             mail.close()
             mail.logout()
-            print("✅ Email processing completed")
+            
         except Exception as e:
             print(f"❌ Email processing error: {e}")
             import traceback
             traceback.print_exc()
     
-    def clean_json_response(self, text):
-        text = text.strip()
-        if text.startswith('```'):
-            lines = text.split('\n')
-            lines = lines[1:]
-            if lines and lines[-1].strip() == '```':
-                lines = lines[:-1]
-            text = '\n'.join(lines).strip()
-        return text
-    
-    def process_single_email(self, mail, msg_id, message_id):
+    def process_single_email(self, email_body, message_id):
+        """Process a single email with AI client matching"""
         try:
-            status, msg_data = mail.uid("fetch", msg_id, '(RFC822)')
-            email_body = email.message_from_bytes(msg_data[0][1])
-            subject = decode_header(email_body['Subject'])[0][0]
-            if isinstance(subject, bytes):
-                subject = subject.decode()
-            sender = email_body.get('From', '')
-            content = ""
-            if email_body.is_multipart():
-                for part in email_body.walk():
-                    if part.get_content_type() == "text/plain":
-                        try:
-                            content += part.get_payload(decode=True).decode('utf-8', errors='ignore')
-                        except:
-                            pass
+            # Extract basic info
+            subject = self.decode_email_header(email_body.get('Subject', 'No Subject'))
+            from_header = email_body.get('From', '')
+            sender_email, sender_name = self.parse_from_header(from_header)
+            email_date = email_body.get('Date', '')
+            
+            print(f"\n📧 Processing: {subject[:50]}")
+            print(f"   From: {sender_name} <{sender_email}>")
+            
+            # Get email content
+            content = self.get_email_content(email_body)
+            
+            # Skip system emails
+            if self.is_system_email(sender_email, subject):
+                print(f"   ⭕ Skipping system email")
+                return
+            
+            # AI extraction
+            print(f"   🤖 Analyzing with AI...")
+            extracted = self.extract_client_and_task_info(
+                subject, content, sender_email, sender_name
+            )
+            
+            if not extracted.get('is_task'):
+                print(f"   ⭕ Not a task-worthy email")
+                return
+            
+            # Check for existing task
+            existing_task = self.find_matching_task(extracted)
+            
+            if existing_task:
+                # Add note to existing task
+                print(f"   📎 Adding note to existing task: {existing_task['title'][:40]}")
+                
+                self.tm.add_note(
+                    task_id=existing_task['id'],
+                    content=extracted.get('note_content', content[:500]),
+                    source='email',
+                    email_subject=subject,
+                    email_from=sender_email,
+                    email_date=email_date
+                )
+                
+                # Update client info if missing
+                if not existing_task.get('client_email') and sender_email:
+                    self.tm.update_task_client_info(
+                        existing_task['id'],
+                        client_email=sender_email,
+                        client_name=extracted.get('client_name')
+                    )
+                
+                print(f"   ✅ Note added to existing task")
+                
             else:
-                try:
-                    content = email_body.get_payload(decode=True).decode('utf-8', errors='ignore')
-                except:
-                    content = ""
-            print(f"📧 Processing: {subject[:60]}...")
-            print(f"   From: {sender[:50]}")
-            task_keywords = ['task', 'create', 'set', 'reminder', 'follow', 'call', 'meeting', 'urgent', 'todo']
-            if not any(kw in subject.lower() or kw in content.lower() for kw in task_keywords):
-                print(f"   ⏭️  Not a task-related email")
-                return message_id
-            prompt = f"""Analyze this email and extract task information.
-
-Email Subject: {subject}
-Email Content: {content[:1000]}
-
-Respond with ONLY pure JSON, no markdown formatting:
-
-{{"create_tasks": true, "tasks": [{{"title": "string", "description": "string", "business": "Cloud Clean Energy", "priority": "high/medium/low", "due_date": "YYYY-MM-DD", "due_time": "HH:MM", "is_meeting": false}}]}}
-
-IMPORTANT: If no specific date mentioned, leave due_date as empty string "". Only include due_date if you can determine a specific date. If not a task email: {{"create_tasks": false, "tasks": []}}"""
-            response = self.claude.messages.create(model="claude-sonnet-4-20250514", max_tokens=1000, messages=[{"role": "user", "content": prompt}])
-            raw_response = response.content[0].text
-            print(f"   🤖 Raw: {raw_response[:80]}...")
-            clean_response = self.clean_json_response(raw_response)
-            try:
-                analysis = json.loads(clean_response)
-            except json.JSONDecodeError:
-                json_match = re.search(r'\{.*\}', clean_response, re.DOTALL)
-                if json_match:
-                    analysis = json.loads(json_match.group())
-                else:
-                    raise
-            if not analysis.get('create_tasks') or not analysis.get('tasks'):
-                print(f"   ⏭️  No tasks to create")
-                return message_id
-            print(f"   📝 Creating {len(analysis['tasks'])} task(s)...")
-            for task in analysis['tasks']:
-                created_task = self.create_task(task)
+                # Create new task
+                print(f"   🆕 Creating new task...")
+                
+                # Get status ID
+                status_name = extracted.get('suggested_status', 'Remember to Callback')
+                status = self.tm.get_status_by_name(status_name)
+                
+                # Build task data
+                due_date = extracted.get('due_date') or date.today().isoformat()
+                due_time = extracted.get('due_time') or '09:00:00'
+                
+                task = self.tm.create_task(
+                    business_id=self.default_business_id,
+                    title=extracted.get('task_title', subject)[:200],
+                    description=extracted.get('task_description', ''),
+                    due_date=due_date,
+                    due_time=due_time,
+                    priority=extracted.get('task_priority', 'medium'),
+                    client_name=extracted.get('client_name'),
+                    client_email=extracted.get('client_email'),
+                    client_phone=extracted.get('client_phone'),
+                    project_name=extracted.get('project_name'),
+                    initial_note=extracted.get('note_content', content[:500]),
+                    note_source='email'
+                )
+                
+                if task:
+                    # Update status only if statuses are available
+                    if status and self.tm.statuses_available():
+                        self.tm.update_task_status(task['id'], status['id'])
+                
+                print(f"   ✅ Task created: {extracted.get('task_title', subject)[:40]}")
+            
         except Exception as e:
-            print(f"   ❌ Error: {e}")
-            return message_id
-        return message_id
-    
-    def create_task(self, task_data):
-        try:
-            business_id = self.businesses.get(task_data.get('business', 'Cloud Clean Energy'))
-            if not business_id:
-                business_id = self.businesses['Cloud Clean Energy']
-            due_date_value = task_data.get('due_date')
-            if not due_date_value or str(due_date_value).strip() == '':
-                due_date_value = date.today().isoformat()
-            else:
-                try:
-                    datetime.strptime(str(due_date_value), '%Y-%m-%d')
-                    due_date_value = str(due_date_value)
-                except:
-                    due_date_value = date.today().isoformat()
-            task_insert = {
-                'business_id': business_id,
-                'title': task_data['title'][:200],
-                'description': task_data.get('description', '')[:1000],
-                'priority': task_data.get('priority', 'medium'),
-                'status': 'pending',
-                'due_date': due_date_value
-            }
-            # Always set a due_time - default to 8 AM if not specified
-            if task_data.get('due_time') and str(task_data.get('due_time')).strip():
-                task_insert['due_time'] = task_data['due_time']
-            else:
-                # Default to 8 AM AEST for all tasks
-                task_insert['due_time'] = '08:00:00' 
-            if task_data.get('is_meeting') is not None:
-                task_insert['is_meeting'] = task_data['is_meeting']
-            result = self.tm.supabase.table('tasks').insert(task_insert).execute()
-            if result.data:
-                task = result.data[0]
-                business_name = [k for k, v in self.businesses.items() if v == business_id][0]
-                self.send_task_creation_confirmation(task, business_name)
-                print(f"   ✅ Task: {task_data['title'][:50]}")
-                return task
-            else:
-                print(f"   ❌ Failed to create task")
-        except Exception as e:
-            print(f"   ❌ Create error: {e}")
+            print(f"   ❌ Error processing email: {e}")
             import traceback
             traceback.print_exc()
     
-
+    def decode_email_header(self, header):
+        """Decode email header (handles encoded subjects)"""
+        if not header:
+            return ''
+        
+        decoded_parts = decode_header(header)
+        result = ''
+        for part, encoding in decoded_parts:
+            if isinstance(part, bytes):
+                result += part.decode(encoding or 'utf-8', errors='replace')
+            else:
+                result += part
+        return result
+    
+    def parse_from_header(self, from_header):
+        """Extract email and name from From header"""
+        import re
+        
+        # Pattern: "Name <email@domain.com>" or just "email@domain.com"
+        match = re.search(r'<?([^<>\s]+@[^<>\s]+)>?', from_header)
+        email_addr = match.group(1) if match else from_header
+        
+        # Extract name
+        name_match = re.search(r'^([^<]+)<', from_header)
+        name = name_match.group(1).strip().strip('"') if name_match else ''
+        
+        if not name:
+            name = email_addr.split('@')[0].replace('.', ' ').title()
+        
+        return email_addr.lower(), name
+    
+    def get_email_content(self, email_body):
+        """Extract text content from email"""
+        content = ''
+        
+        if email_body.is_multipart():
+            for part in email_body.walk():
+                content_type = part.get_content_type()
+                if content_type == 'text/plain':
+                    try:
+                        payload = part.get_payload(decode=True)
+                        content = payload.decode('utf-8', errors='replace')
+                        break
+                    except:
+                        pass
+        else:
+            try:
+                payload = email_body.get_payload(decode=True)
+                content = payload.decode('utf-8', errors='replace')
+            except:
+                content = str(email_body.get_payload())
+        
+        return content[:3000]  # Limit for AI processing
+    
+    def is_system_email(self, sender_email, subject):
+        """Check if email is from system/notification"""
+        system_patterns = [
+            'noreply', 'no-reply', 'donotreply', 'mailer-daemon',
+            'postmaster', 'notification', 'alert', 'system'
+        ]
+        
+        sender_lower = sender_email.lower()
+        for pattern in system_patterns:
+            if pattern in sender_lower:
+                return True
+        
+        # Skip own emails
+        if sender_lower == self.your_email.lower():
+            return True
+        if sender_lower == self.gmail_user.lower():
+            return True
+        
+        return False
+    
+    # ========================================
+    # REMINDER SYSTEM
+    # ========================================
+    
     def send_task_reminders(self):
         """Check for tasks due soon and send reminders"""
+        print(f"\n🔔 Checking reminders at {datetime.now(self.aest).strftime('%I:%M %p')}")
+        
         try:
-            print("🔔 Checking for task reminders... (Step 1: Function called)")
+            now = datetime.now(self.aest)
+            today_str = now.date().isoformat()
             
-            # Timezone
-            try:
-                aest = pytz.timezone('Australia/Brisbane')
-                now = datetime.now(aest)
-            except Exception as e:
-                print(f"❌ ERROR at Step 2 (Timezone): {e}")
-                return
+            # Get pending tasks due today with status info
+            result = self.tm.supabase.table('tasks')\
+                .select('*, project_statuses(*)')\
+                .eq('status', 'pending')\
+                .eq('due_date', today_str)\
+                .execute()
             
-            print(f"⏰ Current time: {now.strftime('%I:%M %p AEST')} (Step 2: OK)")
+            tasks = result.data
+            print(f"   📋 Found {len(tasks)} tasks due today")
             
-            # Database query
-            try:
-                today_str = now.date().isoformat()
-                result = self.tm.supabase.table('tasks')\
-                    .select('*')\
-                    .eq('status', 'pending')\
-                    .eq('due_date', today_str)\
-                    .execute()
-                print(f"📅 Found {len(result.data)} tasks due today (Step 3: OK)")
-            except Exception as e:
-                print(f"❌ ERROR at Step 3 (Database): {e}")
-                return
-            
-            if not result.data:
-                print("   ℹ️  No pending tasks due today")
-                return
-            
-            tasks_with_time = [t for t in result.data if t.get('due_time')]
+            # Filter tasks with due_time
+            tasks_with_time = [t for t in tasks if t.get('due_time')]
             
             if not tasks_with_time:
-                print("   ⏭️  No tasks have due_time set")
+                print("   ℹ️ No tasks with due times")
                 return
-                
-            print(f"📋 Found {len(tasks_with_time)} task(s) with due times")
             
             sent_count = 0
+            
             for task in tasks_with_time:
                 try:
+                    # Parse due time
                     due_time_str = task['due_time']
-                    task_due = datetime.strptime(f"{today_str} {due_time_str}", '%Y-%m-%d %H:%M:%S')
-                    task_due = aest.localize(task_due)
+                    hour, minute, second = map(int, due_time_str.split(':'))
                     
+                    task_due = now.replace(
+                        hour=hour, 
+                        minute=minute, 
+                        second=second, 
+                        microsecond=0
+                    )
+                    
+                    # Calculate time difference
                     time_diff = (task_due - now).total_seconds() / 60
                     
-                    print(f"🔍 {task['title'][:40]} (Due in {time_diff:.1f} min)")
-                    
-                    # Send reminder if 5-15 minutes before
+                    # 5-20 minute window
                     if 5 <= time_diff <= 20:
-                        print(f"   ✅ WITHIN WINDOW - Sending reminder!")
-                        self.send_reminder(task, task_due)
-                        print(f"   📧 Reminder sent")
+                        print(f"   ✅ Sending reminder: {task['title'][:40]}")
+                        
+                        self.etm.send_task_reminder(
+                            task=task,
+                            due_time=task_due,
+                            action_url=self.action_url
+                        )
                         sent_count += 1
-                    else:
-                        print(f"   ⏭️  Not in window")
-                            
+                        
+                        # Rate limit (Resend: 2/sec)
+                        time.sleep(0.6)
+                    
                 except Exception as e:
-                    print(f"   ❌ Error processing task: {e}")
+                    print(f"   ⚠️ Error with task {task.get('id')}: {e}")
                     continue
             
             if sent_count > 0:
-                print(f"✅ Sent {sent_count} reminder(s)")
+                print(f"   ✅ Sent {sent_count} reminder(s)")
             else:
-                print(f"✅ No tasks in 5-20 min window")
+                print(f"   ℹ️ No tasks in 5-20 min window")
                 
         except Exception as e:
-            print(f"❌ CRITICAL ERROR: {e}")
+            print(f"❌ Reminder error: {e}")
             import traceback
             traceback.print_exc()
-
-    def send_reminder(self, task, due_time):
-        """Send reminder email with delay options"""
-        html = f"""
-        <html>
-        <head>
-            <style>
-                body {{ font-family: Arial; padding: 20px; }}
-                .task-box {{ background: #fef2f2; border-left: 4px solid #ef4444; padding: 15px; margin: 15px 0; }}
-                .buttons {{ margin-top: 15px; }}
-                .btn {{ display: inline-block; padding: 10px 16px; margin: 4px; text-decoration: none; border-radius: 6px; font-size: 13px; color: white; }}
-                .btn-complete {{ background: #10b981; }}
-                .btn-delay {{ background: #6b7280; }}
-            </style>
-        </head>
-        <body>
-            <h2>⏰ Task Reminder</h2>
-            <div class="task-box">
-                <p><strong>{task['title']}</strong></p>
-                <p>Due: {due_time.strftime('%I:%M %p AEST')}</p>
-                {f'<div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #e5e7eb;"><strong>Notes:</strong><br>{task["description"]}</div>' if task.get('description') else ''}
-            </div>
-            <div class="buttons">
-                <a href="{self.action_url}?action=complete&task_id={task['id']}" class="btn btn-complete">✅ Complete</a>
-                <a href="{self.action_url}?action=delay_1hour&task_id={task['id']}" class="btn btn-delay">⏰ +1 Hour</a>
-                <a href="{self.action_url}?action=delay_1day&task_id={task['id']}" class="btn btn-delay">📅 +1 Day</a>
-                <a href="{self.action_url}?action=delay_custom&task_id={task['id']}" class="btn btn-delay">🗓️ Custom</a>
-            </div>
-        </body>
-        </html>"""
-        # Send reminder via EnhancedTaskManager
-        plain_body = f"Reminder: {task['title']} is due at {due_time.strftime('%I:%M %p')}"
-        self.etm.send_html_email(
-            self.your_email,
-            f"⏰ {task['title'][:40]}",
-            html,
-            plain_body
-        )
-
-
-    def send_task_creation_confirmation(self, task, business_name):
-        """Send immediate confirmation email when task is created"""
-        # Business colors mapping
-        business_colors = {
-            'Cloud Clean Energy': '#10b981',
-            'DSW (Direct Solar Warehouse)': '#f59e0b',
-            'KVELL': '#8b5cf6',
-            'AI Project Pro': '#3b82f6',
-            'Veterans Health Centre (VHC)': '#ef4444'
-        }
-        business_color = business_colors.get(business_name, '#6b7280')
-        due_date = task.get('due_date', 'Not set')
-        due_time = task.get('due_time', '08:00:00')
-        
-        html = f"""<html><head><style>
-body {{ font-family: Arial, sans-serif; background: #f5f5f5; padding: 20px; }}
-.container {{ max-width: 600px; margin: 0 auto; background: white; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }}
-.header {{ background: {business_color}; color: white; padding: 24px; text-align: center; }}
-.content {{ padding: 24px; }}
-.task-box {{ border-left: 4px solid {business_color}; padding: 16px; margin: 16px 0; background: #f9fafb; }}
-.btn {{ display: inline-block; padding: 12px 20px; margin: 6px; text-decoration: none; border-radius: 6px; color: white; }}
-.btn-complete {{ background: #10b981; }}
-.btn-postpone {{ background: #6b7280; }}
-</style></head><body>
-<div class="container">
-<div class="header"><h2>✅ Task Created!</h2></div>
-<div class="content">
-<div class="task-box">
-<h3>{task['title']}</h3>
-<p><strong>Business:</strong> {business_name}</p>
-<p><strong>Due:</strong> {due_date} at {due_time}</p>
-</div>
-<div>
-<a href="{self.action_url}?action=complete&task_id={task['id']}" class="btn btn-complete">✅ Complete</a>
-<a href="{self.action_url}?action=delay_1day&task_id={task['id']}" class="btn btn-postpone">📅 +1 Day</a>
-<a href="{self.action_url}?action=delay_1week&task_id={task['id']}" class="btn btn-postpone">📅 +1 Week</a>
-</div></div></div></body></html>"""
-        
-        self.etm.send_html_email('rob@cloudcleanenergy.com.au', f"✅ Task: {task['title'][:50]}", html, f"Task: {task['title']}")
-        print(f"   📧 Confirmation sent: {task['title'][:40]}")
-
-
-    def send_task_creation_confirmation(self, task, business_name):
-        """Send immediate confirmation email when task is created"""
-        # Business colors mapping
-        business_colors = {
-            'Cloud Clean Energy': '#10b981',
-            'DSW (Direct Solar Warehouse)': '#f59e0b',
-            'KVELL': '#8b5cf6',
-            'AI Project Pro': '#3b82f6',
-            'Veterans Health Centre (VHC)': '#ef4444'
-        }
-        business_color = business_colors.get(business_name, '#6b7280')
-        due_date = task.get('due_date', 'Not set')
-        due_time = task.get('due_time', '08:00:00')
-        
-        html = f"""<html><head><style>
-body {{ font-family: Arial; background: #f5f5f5; padding: 20px; }}
-.container {{ max-width: 600px; margin: 0 auto; background: white; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }}
-.header {{ background: {business_color}; color: white; padding: 24px; text-align: center; }}
-.content {{ padding: 24px; }}
-.task-box {{ border-left: 4px solid {business_color}; padding: 16px; margin: 16px 0; background: #f9fafb; }}
-.btn {{ display: inline-block; padding: 12px 20px; margin: 6px; text-decoration: none; border-radius: 6px; color: white; }}
-.btn-complete {{ background: #10b981; }}
-.btn-postpone {{ background: #6b7280; }}
-</style></head><body>
-<div class="container">
-<div class="header"><h2>✅ Task Created!</h2></div>
-<div class="content">
-<div class="task-box">
-<h3>{task['title']}</h3>
-<p><strong>Business:</strong> {business_name}</p>
-<p><strong>Due:</strong> {due_date} at {due_time}</p>
-</div>
-<div>
-<a href="{self.action_url}?action=complete&task_id={task['id']}" class="btn btn-complete">✅ Complete</a>
-<a href="{self.action_url}?action=delay_1day&task_id={task['id']}" class="btn btn-postpone">📅 +1 Day</a>
-<a href="{self.action_url}?action=delay_1week&task_id={task['id']}" class="btn btn-postpone">📅 +1 Week</a>
-</div></div></div></body></html>"""
-        
-        self.etm.send_html_email('rob@cloudcleanenergy.com.au', f"✅ Task: {task['title'][:50]}", html, f"Task: {task['title']}")
-        print(f"   📧 Confirmation sent: {task['title'][:40]}")
-
+    
+    # ========================================
+    # MAIN SCHEDULER
+    # ========================================
+    
     def start(self):
-        print("🚀 Starting scheduler (skipping startup email check)...")
-        print("🌐 Cloud scheduler started - Running 24/7!")
-        print("📧 Email checks: Every 15 minutes")
-        print("⏰ Task reminders: Every 15 minutes")
-        print("📊 Daily summaries: 8:00 AM AEST")
-        print(f"📬 Summaries sent to: rob@cloudcleanenergy.com.au")
+        """Start the 24/7 scheduler daemon"""
         
+        # Initialize timestamps
         last_email_check = datetime.now()
         last_reminder_check = datetime.now()
         last_summary_check = datetime.now()
+        
+        print("\n" + "="*50)
+        print("🌐 Cloud Email Processor Started")
+        print("="*50)
+        print(f"📧 Email checks: Every 15 minutes")
+        print(f"⏰ Reminder checks: Every 15 minutes")
+        print(f"📊 Daily summary: 8:00 AM AEST")
+        print(f"🎯 Smart client matching: ENABLED")
+        print(f"🤖 AI summarization: ENABLED")
+        print("="*50 + "\n")
         
         while True:
             now = datetime.now()
             
             # Email check every 15 minutes
             if (now - last_email_check).total_seconds() >= 900:
-                print("⏰ 15 min elapsed - email check")
+                print(f"\n⏰ 15 min elapsed - checking emails")
                 self.process_emails()
                 last_email_check = now
             
             # Reminder check every 15 minutes
-            reminder_elapsed = (now - last_reminder_check).total_seconds()
-            print(f"🔍 DEBUG: Reminder check - {reminder_elapsed:.1f} seconds elapsed (need 900)")
-            if reminder_elapsed >= 900:
-                print("⏰ 15 min elapsed - reminder check")
+            if (now - last_reminder_check).total_seconds() >= 900:
+                print(f"\n⏰ 15 min elapsed - checking reminders")
                 self.send_task_reminders()
                 last_reminder_check = now
             
             # Daily summary at 8 AM AEST (22:00 UTC)
-            if now.hour == 22 and now.minute < 15 and (now - last_summary_check).total_seconds() >= 3600:
-                print("⏰ 8 AM AEST - daily summary")
-                self.etm.send_enhanced_daily_summary()
-                last_summary_check = now
+            if now.hour == 22 and now.minute < 15:
+                if (now - last_summary_check).total_seconds() >= 3600:
+                    print(f"\n⏰ 8 AM AEST - sending daily summary")
+                    self.etm.send_enhanced_daily_summary()
+                    last_summary_check = now
             
+            # Sleep 60 seconds
             time.sleep(60)
 
+
+# ========================================
+# ENTRY POINT
+# ========================================
+
 if __name__ == "__main__":
+    from dotenv import load_dotenv
+    load_dotenv()
+    
     processor = CloudEmailProcessor()
     processor.start()
