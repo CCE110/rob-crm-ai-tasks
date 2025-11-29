@@ -496,7 +496,9 @@ Return ONLY valid JSON, no explanation."""
                 try:
                     # Parse due time
                     due_time_str = task['due_time']
-                    hour, minute, second = map(int, due_time_str.split(':'))
+                    parts = due_time_str.split(':')
+                    hour, minute = int(parts[0]), int(parts[1])
+                    second = int(float(parts[2])) if len(parts) > 2 else 0
                     
                     task_due = now.replace(
                         hour=hour, 
