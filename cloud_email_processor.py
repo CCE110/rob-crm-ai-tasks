@@ -358,7 +358,22 @@ Return ONLY valid JSON, no explanation."""
                 
                 # Build task data
                 due_date = extracted.get('due_date') or date.today().isoformat()
-                due_time = extracted.get('due_time') or '09:00:00'
+                # Smart default: next business day 9 AM if no time specified and past 9 AM
+                if extracted.get('due_time'):
+                    due_time = extracted.get('due_time')
+                else:
+                    now_aest = datetime.now(pytz.timezone('Australia/Brisbane'))
+                    if now_aest.hour < 9:
+                        # Before 9 AM - use today 9 AM
+                        due_time = '09:00:00'
+                    else:
+                        # After 9 AM - use next business day 9 AM
+                        next_day = now_aest + timedelta(days=1)
+                        # Skip weekends
+                        while next_day.weekday() >= 5:  # 5=Sat, 6=Sun
+                            next_day += timedelta(days=1)
+                        due_date = next_day.date().isoformat()
+                        due_time = '09:00:00'
                 
                 task = self.tm.create_task(
                     business_id=self.default_business_id,
