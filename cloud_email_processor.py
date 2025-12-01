@@ -477,7 +477,7 @@ Return ONLY valid JSON, no explanation."""
             'task reminder',
             'daily summary',
             '📊 daily summary',
-            'rob's ai task manager'
+            "rob's ai task manager"
         ]
         
         for pattern in crm_subject_patterns:
