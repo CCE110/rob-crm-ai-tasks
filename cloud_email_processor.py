@@ -1,6 +1,6 @@
 """
 Cloud Email Processor - AI-Powered Client Matching & Email Threading
-Updated: November 28, 2025
+Updated: December 2, 2025
 
 Features:
 - Smart client matching (email, name, project)
@@ -8,6 +8,7 @@ Features:
 - AI extracts client info from emails
 - Batch processing (newest 10 first)
 - Message-ID deduplication
+- AEST timezone support for date parsing
 """
 
 import os
@@ -96,7 +97,16 @@ class CloudEmailProcessor:
         3. Identify if this relates to existing project
         4. Parse task details
         """
+        # Get current AEST time for AI context
+        aest = pytz.timezone('Australia/Brisbane')
+        now_aest = datetime.now(aest)
+        current_datetime = now_aest.strftime('%A, %d %B %Y at %I:%M %p AEST')
+        
         prompt = f"""Analyze this email and extract information.
+
+IMPORTANT - CURRENT DATE/TIME: {current_datetime}
+Interpret ALL relative dates (today, tomorrow, this afternoon, next week, etc.) based on this time.
+All times are Australian Eastern Standard Time (AEST/Brisbane timezone).
 
 FROM: {sender_name} <{sender_email}>
 SUBJECT: {subject}
