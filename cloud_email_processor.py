@@ -396,6 +396,9 @@ Return ONLY valid JSON, no explanation."""
                         self.tm.update_task_status(task['id'], status['id'])
                 
                 print(f"   ✅ Task created: {extracted.get('task_title', subject)[:40]}")
+                
+                # Send confirmation email to sender
+                self.send_task_confirmation(sender_email, task, due_date, due_time)
             
         except Exception as e:
             print(f"   ❌ Error processing email: {e}")
@@ -568,6 +571,104 @@ Return ONLY valid JSON, no explanation."""
             import traceback
             traceback.print_exc()
     
+    def send_task_confirmation(self, sender_email, task, due_date, due_time):
+        """Send confirmation email when task is created"""
+        try:
+            # Parse due time for display
+            if due_time:
+                try:
+                    parts = str(due_time).split(':')
+                    hour, minute = int(parts[0]), int(parts[1])
+                    time_12hr = datetime.now().replace(hour=hour, minute=minute).strftime('%I:%M %p')
+                except:
+                    time_12hr = str(due_time)
+            else:
+                time_12hr = "No time set"
+            
+            # Format due date
+            try:
+                due_dt = datetime.strptime(str(due_date), '%Y-%m-%d')
+                date_formatted = due_dt.strftime('%A, %d %b %Y')
+            except:
+                date_formatted = str(due_date)
+            
+            task_id = task.get('id', '')
+            title = task.get('title', 'Task')
+            
+            html = f"""<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"></head>
+<body style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: 0 auto;">
+
+<div style="background: #ecfdf5; border-left: 4px solid #10b981; padding: 20px; border-radius: 8px;">
+    
+    <h2 style="color: #065f46; margin: 0 0 15px 0;">
+        ✅ Task Created
+    </h2>
+    
+    <div style="font-size: 18px; font-weight: bold; margin: 10px 0; color: #111827;">
+        {title}
+    </div>
+    
+    <div style="margin: 15px 0; padding: 15px; background: white; border-radius: 5px;">
+        <div style="margin: 5px 0;">📅 <strong>Due:</strong> {date_formatted}</div>
+        <div style="margin: 5px 0;">⏰ <strong>Time:</strong> {time_12hr}</div>
+    </div>
+    
+    <p style="color: #6b7280; font-size: 14px;">
+        You will receive a reminder 5-20 minutes before this is due.
+    </p>
+    
+    <div style="margin-top: 20px;">
+        <a href="{self.action_url}?action=complete&task_id={task_id}" 
+           style="display: inline-block; padding: 10px 16px; margin: 5px; background: #10b981; color: white; text-decoration: none; border-radius: 6px; font-weight: bold;">
+            ✅ Complete
+        </a>
+        <a href="{self.action_url}?action=delay_1day&task_id={task_id}" 
+           style="display: inline-block; padding: 10px 16px; margin: 5px; background: #6b7280; color: white; text-decoration: none; border-radius: 6px; font-weight: bold;">
+            📅 +1 Day
+        </a>
+        <a href="{self.action_url}?action=delay_custom&task_id={task_id}" 
+           style="display: inline-block; padding: 10px 16px; margin: 5px; background: #6b7280; color: white; text-decoration: none; border-radius: 6px; font-weight: bold;">
+            🗓️ Change Time
+        </a>
+    </div>
+</div>
+
+<p style="color: #9ca3af; font-size: 12px; margin-top: 20px;">
+    Sent by Rob's AI Task Manager
+</p>
+
+</body>
+</html>"""
+
+            plain = f"""✅ Task Created
+
+{title}
+
+📅 Due: {date_formatted}
+⏰ Time: {time_12hr}
+
+You will receive a reminder 5-20 minutes before this is due.
+
+Actions:
+- Complete: {self.action_url}?action=complete&task_id={task_id}
+- +1 Day: {self.action_url}?action=delay_1day&task_id={task_id}
+- Change Time: {self.action_url}?action=delay_custom&task_id={task_id}
+"""
+
+            # Send to the original sender
+            self.etm.send_html_email(
+                sender_email,
+                f"✅ Task Set: {title[:50]}",
+                html,
+                plain
+            )
+            print(f"   📨 Confirmation sent to {sender_email}")
+            
+        except Exception as e:
+            print(f"   ⚠️ Confirmation email failed: {e}")
+
     # ========================================
     # MAIN SCHEDULER
     # ========================================
