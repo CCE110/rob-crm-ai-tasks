@@ -504,7 +504,7 @@ ACTIONS:
             # Group by status
             by_status = {}
             for task in tasks:
-                status = task.get('project_statuses', {})
+                status = task.get('project_statuses') or {}
                 status_name = status.get('name', 'Unknown')
                 if status_name not in by_status:
                     by_status[status_name] = {
