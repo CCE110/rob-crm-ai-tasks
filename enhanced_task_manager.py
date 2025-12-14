@@ -293,6 +293,19 @@ SUMMARY:"""
                   font-size: 14px;">
             📅 +1 Day
         </a>
+        
+        <a href="{action_url}?action=delay_custom&task_id={task_id}" 
+           style="display: inline-block; 
+                  padding: 12px 24px; 
+                  margin: 5px; 
+                  background: #3b82f6; 
+                  color: white; 
+                  text-decoration: none; 
+                  border-radius: 6px; 
+                  font-weight: 600;
+                  font-size: 14px;">
+            📅 Custom
+        </a>
     </div>
 </div>
 
