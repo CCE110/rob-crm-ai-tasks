@@ -645,6 +645,10 @@ Return ONLY valid JSON, no explanation."""
            style="display: inline-block; padding: 10px 16px; margin: 5px; background: #10b981; color: white; text-decoration: none; border-radius: 6px; font-weight: bold;">
             ✅ Complete
         </a>
+        <a href="{self.action_url}?action=delay_1hour&task_id={task_id}" 
+           style="display: inline-block; padding: 10px 16px; margin: 5px; background: #6b7280; color: white; text-decoration: none; border-radius: 6px; font-weight: bold;">
+            ⏰ +1 Hour
+        </a>
         <a href="{self.action_url}?action=delay_1day&task_id={task_id}" 
            style="display: inline-block; padding: 10px 16px; margin: 5px; background: #6b7280; color: white; text-decoration: none; border-radius: 6px; font-weight: bold;">
             📅 +1 Day
@@ -674,6 +678,7 @@ You will receive a reminder 5-20 minutes before this is due.
 
 Actions:
 - Complete: {self.action_url}?action=complete&task_id={task_id}
+- +1 Hour: {self.action_url}?action=delay_1hour&task_id={task_id}
 - +1 Day: {self.action_url}?action=delay_1day&task_id={task_id}
 - Change Time: {self.action_url}?action=delay_custom&task_id={task_id}
 """
