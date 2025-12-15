@@ -483,24 +483,6 @@ class TaskManager:
 # STANDALONE TESTING
 # ========================================
 
-if __name__ == "__main__":
-    from dotenv import load_dotenv
-    load_dotenv()
-    
-    tm = TaskManager()
-    
-    print("\n📊 Project Statuses:")
-    for status in sorted(tm.statuses.values(), key=lambda x: x['display_order']):
-        print(f"  {status['emoji']} {status['name']} (order: {status['display_order']})")
-    
-    print("\n📋 Pending Tasks Today:")
-    tasks = tm.get_pending_tasks_due_today()
-    for task in tasks:
-        status = task.get('project_statuses', {})
-        print(f"  - {task['title']}")
-        print(f"    Status: {status.get('emoji', '📋')} {status.get('name', 'Unknown')}")
-        print(f"    Client: {task.get('client_name', 'N/A')}")
-
     # ========================================
     # CHECKLIST METHODS
     # ========================================
@@ -586,3 +568,23 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"Error bulk updating checklist: {e}")
             return False
+
+
+if __name__ == "__main__":
+    from dotenv import load_dotenv
+    load_dotenv()
+    
+    tm = TaskManager()
+    
+    print("\n📊 Project Statuses:")
+    for status in sorted(tm.statuses.values(), key=lambda x: x['display_order']):
+        print(f"  {status['emoji']} {status['name']} (order: {status['display_order']})")
+    
+    print("\n📋 Pending Tasks Today:")
+    tasks = tm.get_pending_tasks_due_today()
+    for task in tasks:
+        status = task.get('project_statuses', {})
+        print(f"  - {task['title']}")
+        print(f"    Status: {status.get('emoji', '📋')} {status.get('name', 'Unknown')}")
+        print(f"    Client: {task.get('client_name', 'N/A')}")
+
