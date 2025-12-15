@@ -80,6 +80,78 @@ SUMMARY:"""
                 return f"Latest: {notes[0].get('content', '')[:200]}"
             return "Unable to generate summary."
     
+    def extract_action_items(self, notes, task_title):
+        """
+        Use Claude AI to extract actionable to-do items from task notes.
+        Returns a list of action item strings.
+        """
+        if not notes:
+            return []
+        
+        # Build notes text for AI
+        notes_text = ""
+        for note in notes:
+            source = note.get('source', 'manual')
+            created = note.get('created_at', '')[:10]
+            content = note.get('content', '')
+            notes_text += f"[{created}] {content}\n"
+        
+        try:
+            response = self.anthropic.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=500,
+                messages=[{
+                    "role": "user",
+                    "content": f"""Extract specific action items from these task notes.
+
+TASK: {task_title}
+
+NOTES:
+{notes_text}
+
+Return ONLY a JSON array of action item strings. Each item should be:
+- A specific, actionable task (start with a verb)
+- Concise (under 60 characters)
+- Something that can be checked off when done
+
+Example format:
+["Call client to confirm appointment", "Send quote via email", "Order equipment from supplier"]
+
+If no clear action items, return: []
+
+ACTION ITEMS (JSON array only):"""
+                }]
+            )
+            
+            result = response.content[0].text.strip()
+            
+            # Parse JSON response
+            import json
+            # Clean up response if needed
+            if result.startswith('```'):
+                result = result.split('```')[1]
+                if result.startswith('json'):
+                    result = result[4:]
+            result = result.strip()
+            
+            items = json.loads(result)
+            if isinstance(items, list):
+                print(f"📋 Extracted {len(items)} action items")
+                return items[:10]  # Max 10 items
+            return []
+            
+        except Exception as e:
+            print(f"⚠️ Action item extraction failed: {e}")
+            return []
+    
+    def sync_checklist_items(self, task_id, action_items):
+        """
+        Sync extracted action items with database checklist.
+        Adds new items, preserves existing ones (including completed status).
+        """
+        for item_text in action_items:
+            self.tm.add_checklist_item(task_id, item_text)
+    
     # ========================================
     # EMAIL SENDING (Resend API)
     # ========================================
@@ -149,6 +221,15 @@ SUMMARY:"""
         
         # Build notes HTML
         notes_html = self._build_notes_html(notes)
+        
+        # Extract and sync action items from notes
+        action_items = self.extract_action_items(all_notes, task['title'])
+        if action_items:
+            self.sync_checklist_items(task_id, action_items)
+        
+        # Get incomplete checklist items
+        checklist_items = self.tm.get_checklist_items(task_id, include_completed=False)
+        checklist_html = self._build_checklist_html(task_id, checklist_items, action_url)
         
         # Build status buttons HTML
         status_buttons_html = self._build_status_buttons_html(task_id, action_url)
@@ -239,6 +320,9 @@ SUMMARY:"""
 
 <!-- Notes History -->
 {notes_html}
+
+<!-- Checklist -->
+{checklist_html}
 
 <!-- Action Buttons -->
 <div style="background: white; 
@@ -354,6 +438,55 @@ ACTIONS:
             plain
         )
     
+    def _build_checklist_html(self, task_id, checklist_items, action_url):
+        """Build HTML for checklist section with Update button"""
+        if not checklist_items:
+            return ""
+        
+        # Build checklist items display
+        items_html = ""
+        for item in checklist_items:
+            items_html += f"""
+            <div style="padding: 8px 0; 
+                        border-bottom: 1px solid #e5e7eb;
+                        color: #374151;
+                        font-size: 14px;">
+                ○ {item['item_text']}
+            </div>"""
+        
+        return f"""
+<!-- Checklist Section -->
+<div style="background: white; 
+            padding: 20px; 
+            border-radius: 8px; 
+            margin-bottom: 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+    
+    <div style="font-weight: 600; 
+                color: #374151; 
+                margin-bottom: 15px;
+                font-size: 14px;">
+        📋 To-Do Items ({len(checklist_items)} remaining)
+    </div>
+    
+    <div style="margin-bottom: 15px;">
+        {items_html}
+    </div>
+    
+    <a href="{action_url}?action=checklist&task_id={task_id}" 
+       style="display: inline-block; 
+              padding: 10px 20px; 
+              background: #8b5cf6; 
+              color: white; 
+              text-decoration: none; 
+              border-radius: 6px; 
+              font-weight: 600;
+              font-size: 14px;">
+        ✏️ Update Checklist
+    </a>
+</div>
+"""
+
     def _build_notes_html(self, notes):
         """Build HTML for notes history section"""
         if not notes:

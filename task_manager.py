@@ -500,3 +500,89 @@ if __name__ == "__main__":
         print(f"  - {task['title']}")
         print(f"    Status: {status.get('emoji', '📋')} {status.get('name', 'Unknown')}")
         print(f"    Client: {task.get('client_name', 'N/A')}")
+
+    # ========================================
+    # CHECKLIST METHODS
+    # ========================================
+    
+    def get_checklist_items(self, task_id, include_completed=False):
+        """Get checklist items for a task"""
+        try:
+            query = self.supabase.table('task_checklist_items')\
+                .select('*')\
+                .eq('task_id', task_id)\
+                .order('created_at')
+            
+            if not include_completed:
+                query = query.eq('is_completed', False)
+            
+            result = query.execute()
+            return result.data
+        except Exception as e:
+            print(f"Error getting checklist: {e}")
+            return []
+    
+    def add_checklist_item(self, task_id, item_text):
+        """Add a new checklist item"""
+        try:
+            # Check if item already exists (avoid duplicates)
+            existing = self.supabase.table('task_checklist_items')\
+                .select('id')\
+                .eq('task_id', task_id)\
+                .ilike('item_text', item_text)\
+                .execute()
+            
+            if existing.data:
+                return existing.data[0]  # Return existing item
+            
+            result = self.supabase.table('task_checklist_items').insert({
+                'task_id': task_id,
+                'item_text': item_text
+            }).execute()
+            return result.data[0] if result.data else None
+        except Exception as e:
+            print(f"Error adding checklist item: {e}")
+            return None
+    
+    def complete_checklist_item(self, item_id):
+        """Mark a checklist item as completed"""
+        try:
+            from datetime import datetime
+            result = self.supabase.table('task_checklist_items').update({
+                'is_completed': True,
+                'completed_at': datetime.now().isoformat()
+            }).eq('id', item_id).execute()
+            return bool(result.data)
+        except Exception as e:
+            print(f"Error completing checklist item: {e}")
+            return False
+    
+    def bulk_update_checklist(self, task_id, completed_item_ids):
+        """Mark multiple items as completed, others as incomplete"""
+        try:
+            from datetime import datetime
+            
+            # Get all items for this task
+            all_items = self.supabase.table('task_checklist_items')\
+                .select('id')\
+                .eq('task_id', task_id)\
+                .execute()
+            
+            for item in all_items.data:
+                if item['id'] in completed_item_ids:
+                    # Mark as completed
+                    self.supabase.table('task_checklist_items').update({
+                        'is_completed': True,
+                        'completed_at': datetime.now().isoformat()
+                    }).eq('id', item['id']).execute()
+                else:
+                    # Mark as incomplete (in case it was unchecked)
+                    self.supabase.table('task_checklist_items').update({
+                        'is_completed': False,
+                        'completed_at': None
+                    }).eq('id', item['id']).execute()
+            
+            return True
+        except Exception as e:
+            print(f"Error bulk updating checklist: {e}")
+            return False

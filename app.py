@@ -240,6 +240,107 @@ CUSTOM_DELAY_TEMPLATE = """<!DOCTYPE html>
 </body>
 </html>"""
 
+CHECKLIST_TEMPLATE = """<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Update Checklist</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 16px;
+            padding: 30px;
+            max-width: 500px;
+            width: 100%;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        h1 { color: #1f2937; margin: 0 0 10px 0; font-size: 24px; }
+        .task-title { color: #6b7280; margin-bottom: 20px; font-size: 14px; }
+        .checklist-item {
+            display: flex;
+            align-items: center;
+            padding: 12px;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        .checklist-item:last-child { border-bottom: none; }
+        .checklist-item input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            margin-right: 12px;
+            cursor: pointer;
+        }
+        .checklist-item label {
+            flex: 1;
+            cursor: pointer;
+            color: #374151;
+        }
+        .checklist-item.completed label {
+            text-decoration: line-through;
+            color: #9ca3af;
+        }
+        .btn {
+            display: inline-block;
+            padding: 14px 28px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            text-decoration: none;
+            margin-top: 20px;
+        }
+        .btn-primary { background: #8b5cf6; color: white; width: 100%; }
+        .btn-primary:hover { background: #7c3aed; }
+        .empty-state {
+            text-align: center;
+            padding: 30px;
+            color: #6b7280;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📋 Update Checklist</h1>
+        <p class="task-title">{{ task_title }}</p>
+        
+        {% if items %}
+        <form method="POST" action="/action/checklist_submit">
+            <input type="hidden" name="task_id" value="{{ task_id }}">
+            
+            {% for item in items %}
+            <div class="checklist-item {% if item.is_completed %}completed{% endif %}">
+                <input type="checkbox" 
+                       id="item_{{ item.id }}" 
+                       name="completed_items" 
+                       value="{{ item.id }}"
+                       {% if item.is_completed %}checked{% endif %}>
+                <label for="item_{{ item.id }}">{{ item.item_text }}</label>
+            </div>
+            {% endfor %}
+            
+            <button type="submit" class="btn btn-primary">💾 Save Changes</button>
+        </form>
+        {% else %}
+        <div class="empty-state">
+            <p>No checklist items yet.</p>
+            <p>Items will be extracted from task notes automatically.</p>
+        </div>
+        {% endif %}
+    </div>
+</body>
+</html>"""
+
 
 # ========================================
 # ROUTES
@@ -287,6 +388,9 @@ def handle_action():
     
     elif action == 'prev_status':
         return handle_prev_status(task_id, task_title)
+    
+    elif action == 'checklist':
+        return handle_checklist_form(task_id, task_title, task)
     
     else:
         return render_template_string(ERROR_TEMPLATE, 
@@ -446,6 +550,64 @@ def handle_prev_status(task_id, task_title):
     else:
         return render_template_string(ERROR_TEMPLATE, 
             message=result)
+
+
+# ========================================
+# CHECKLIST HANDLERS
+# ========================================
+
+def handle_checklist_form(task_id, task_title, task):
+    """Display checklist update form"""
+    # Get all checklist items (including completed)
+    items = tm.get_checklist_items(task_id, include_completed=True)
+    
+    return render_template_string(CHECKLIST_TEMPLATE,
+        task_id=task_id,
+        task_title=task_title,
+        items=items
+    )
+
+
+@app.route('/action/checklist_submit', methods=['POST'])
+def handle_checklist_submit():
+    """Handle checklist form submission"""
+    task_id = request.form.get('task_id')
+    completed_item_ids = request.form.getlist('completed_items')
+    
+    if not task_id:
+        return render_template_string(ERROR_TEMPLATE, 
+            message="Missing task ID")
+    
+    try:
+        # Get task info
+        task = tm.get_task(task_id)
+        if not task:
+            return render_template_string(ERROR_TEMPLATE, 
+                message="Task not found")
+        
+        # Update checklist items
+        success = tm.bulk_update_checklist(task_id, completed_item_ids)
+        
+        if success:
+            # Count completed items
+            completed_count = len(completed_item_ids)
+            
+            return render_template_string(SUCCESS_TEMPLATE,
+                icon="✅",
+                title="Checklist Updated",
+                task_title=task.get('title', 'Task'),
+                message=f"{completed_count} item(s) marked complete",
+                status_name=None,
+                status_color=None,
+                status_emoji=None
+            )
+        else:
+            return render_template_string(ERROR_TEMPLATE, 
+                message="Failed to update checklist")
+            
+    except Exception as e:
+        return render_template_string(ERROR_TEMPLATE, 
+            message=f"Error: {str(e)}")
 
 
 # ========================================
