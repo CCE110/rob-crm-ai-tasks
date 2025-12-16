@@ -1,24 +1,26 @@
 """
 Rob CRM Task Actions - Web Service
-Version: 2.2-enhanced-checklist
-Handles button clicks from emails and checklist management
+Version: 2.2.1-fixed
+Handles button clicks from reminder emails and checklist management
 """
 
-from flask import Flask, request, redirect
 import os
-import pytz
+from flask import Flask, request, redirect, url_for
+from task_manager import TaskManager
+from enhanced_task_manager import EnhancedTaskManager
 from datetime import datetime, timedelta
+import pytz
 
 app = Flask(__name__)
 
-# Initialize TaskManager
-from task_manager import TaskManager
+# Initialize managers
 tm = TaskManager()
+etm = EnhancedTaskManager()
 
-# Load project statuses
+# Load project statuses on startup
 try:
-    statuses_result = tm.supabase.table('project_statuses').select('*').order('display_order').execute()
-    PROJECT_STATUSES = statuses_result.data if statuses_result.data else []
+    statuses = tm.supabase.table('project_statuses').select('*').order('display_order').execute()
+    PROJECT_STATUSES = statuses.data if statuses.data else []
     print(f"📊 Loaded {len(PROJECT_STATUSES)} project statuses")
 except Exception as e:
     print(f"⚠️ Could not load project statuses: {e}")
@@ -26,7 +28,6 @@ except Exception as e:
 
 # Get action URL from environment
 ACTION_URL = os.getenv('TASK_ACTION_URL', 'https://rob-crm-tasks-production.up.railway.app/action')
-
 
 # ============================================
 # HTML TEMPLATES
@@ -37,37 +38,48 @@ SUCCESS_TEMPLATE = """<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{title}</title>
+    <title>✅ {title}</title>
     <style>
-        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-        body {{
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{ 
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
             display: flex;
-            justify-content: center;
             align-items: center;
+            justify-content: center;
             padding: 20px;
         }}
         .card {{
             background: white;
             border-radius: 16px;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
             padding: 40px;
+            max-width: 500px;
+            width: 100%;
             text-align: center;
-            max-width: 400px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
         }}
         .icon {{ font-size: 64px; margin-bottom: 20px; }}
-        h1 {{ color: #1f2937; margin-bottom: 10px; }}
-        p {{ color: #6b7280; margin-bottom: 20px; }}
-        .task-name {{ color: #667eea; font-weight: 600; }}
+        h1 {{ color: #1a1a2e; margin-bottom: 15px; font-size: 24px; }}
+        .message {{ color: #666; margin-bottom: 25px; line-height: 1.6; }}
+        .task-title {{ 
+            background: #f0f0f0; 
+            padding: 15px; 
+            border-radius: 8px; 
+            margin: 20px 0;
+            font-weight: 500;
+            color: #333;
+        }}
+        .close-note {{ color: #999; font-size: 14px; margin-top: 20px; }}
     </style>
 </head>
 <body>
     <div class="card">
         <div class="icon">{icon}</div>
         <h1>{title}</h1>
-        <p>{message}</p>
+        <div class="task-title">{task_title}</div>
+        <p class="message">{message}</p>
+        <p class="close-note">You can close this window</p>
     </div>
 </body>
 </html>"""
@@ -77,36 +89,37 @@ ERROR_TEMPLATE = """<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Error</title>
+    <title>❌ Error</title>
     <style>
-        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-        body {{
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{ 
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+            background: linear-gradient(135deg, #ff6b6b 0%, #c0392b 100%);
             min-height: 100vh;
             display: flex;
-            justify-content: center;
             align-items: center;
+            justify-content: center;
             padding: 20px;
         }}
         .card {{
             background: white;
             border-radius: 16px;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
             padding: 40px;
+            max-width: 500px;
+            width: 100%;
             text-align: center;
-            max-width: 400px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
         }}
         .icon {{ font-size: 64px; margin-bottom: 20px; }}
-        h1 {{ color: #1f2937; margin-bottom: 10px; }}
-        p {{ color: #6b7280; }}
+        h1 {{ color: #c0392b; margin-bottom: 15px; }}
+        .message {{ color: #666; line-height: 1.6; }}
     </style>
 </head>
 <body>
     <div class="card">
         <div class="icon">❌</div>
-        <h1>Error</h1>
-        <p>{message}</p>
+        <h1>Something went wrong</h1>
+        <p class="message">{error}</p>
     </div>
 </body>
 </html>"""
@@ -116,41 +129,48 @@ CUSTOM_DELAY_TEMPLATE = """<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Set New Time</title>
+    <title>🗓️ Reschedule Task</title>
     <style>
-        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-        body {{
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{ 
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
             display: flex;
-            justify-content: center;
             align-items: center;
+            justify-content: center;
             padding: 20px;
         }}
         .card {{
             background: white;
             border-radius: 16px;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
             padding: 40px;
-            max-width: 400px;
+            max-width: 500px;
             width: 100%;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
         }}
-        h1 {{ color: #1f2937; margin-bottom: 8px; text-align: center; }}
-        .task-name {{ color: #667eea; text-align: center; margin-bottom: 24px; font-weight: 600; }}
-        label {{ display: block; color: #374151; font-weight: 500; margin-bottom: 8px; }}
-        input {{
-            width: 100%;
-            padding: 12px;
-            border: 2px solid #e5e7eb;
-            border-radius: 8px;
+        h1 {{ color: #1a1a2e; margin-bottom: 10px; font-size: 24px; }}
+        .task-title {{ 
+            background: #f0f0f0; 
+            padding: 15px; 
+            border-radius: 8px; 
+            margin: 20px 0;
+            font-weight: 500;
+            color: #333;
+        }}
+        label {{ display: block; margin-bottom: 8px; font-weight: 500; color: #333; }}
+        input {{ 
+            width: 100%; 
+            padding: 12px; 
+            border: 2px solid #e0e0e0; 
+            border-radius: 8px; 
             font-size: 16px;
-            margin-bottom: 16px;
+            margin-bottom: 20px;
         }}
         input:focus {{ outline: none; border-color: #667eea; }}
         button {{
             width: 100%;
-            padding: 14px;
+            padding: 15px;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
             border: none;
@@ -164,15 +184,15 @@ CUSTOM_DELAY_TEMPLATE = """<!DOCTYPE html>
 </head>
 <body>
     <div class="card">
-        <h1>🗓️ Set New Time</h1>
-        <div class="task-name">{task_title}</div>
+        <h1>🗓️ Reschedule Task</h1>
+        <div class="task-title">{task_title}</div>
         <form method="POST" action="{action_url}/custom_delay">
             <input type="hidden" name="task_id" value="{task_id}">
-            <label>New Date</label>
-            <input type="date" name="new_date" value="{current_date}" required>
-            <label>New Time</label>
-            <input type="time" name="new_time" value="{current_time}" required>
-            <button type="submit">💾 Save New Time</button>
+            <label>New Date:</label>
+            <input type="date" name="new_date" value="{default_date}" required>
+            <label>New Time:</label>
+            <input type="time" name="new_time" value="{default_time}" required>
+            <button type="submit">📅 Update Schedule</button>
         </form>
     </div>
 </body>
@@ -183,351 +203,297 @@ CHECKLIST_TEMPLATE = """<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Update Checklist</title>
+    <title>📋 Update Checklist</title>
     <style>
-        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-        body {{
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{ 
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
-            padding: 20px;
             display: flex;
+            align-items: center;
             justify-content: center;
-            align-items: flex-start;
+            padding: 20px;
         }}
-        .container {{
+        .card {{
             background: white;
             border-radius: 16px;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            padding: 30px;
             max-width: 600px;
             width: 100%;
-            margin-top: 40px;
-            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
         }}
-        .header {{
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 24px;
-        }}
-        .header h1 {{
-            font-size: 24px;
-            margin-bottom: 8px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }}
-        .header .task-title {{
+        h1 {{ color: #1a1a2e; margin-bottom: 8px; font-size: 22px; }}
+        .task-title {{ 
+            color: #666;
             font-size: 14px;
-            opacity: 0.9;
+            margin-bottom: 15px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #eee;
         }}
-        .content {{
-            padding: 24px;
-        }}
-        
-        /* Due Info */
         .due-info {{
-            background: #fef3c7;
-            color: #92400e;
-            padding: 12px 16px;
-            border-radius: 10px;
-            font-size: 14px;
-            margin-bottom: 16px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }}
-        
-        /* Delay Buttons Section */
-        .delay-section {{
-            background: #f8f9ff;
-            border-radius: 12px;
-            padding: 16px;
-            margin-bottom: 24px;
-        }}
-        .delay-section h3 {{
-            font-size: 14px;
-            color: #667eea;
-            margin-bottom: 12px;
-            font-weight: 600;
-        }}
-        .delay-buttons {{
-            display: flex;
-            gap: 8px;
-            flex-wrap: wrap;
-        }}
-        .delay-btn {{
-            padding: 10px 16px;
-            border: none;
+            background: #fff3cd;
+            color: #856404;
+            padding: 10px 15px;
             border-radius: 8px;
             font-size: 14px;
+            margin-bottom: 15px;
+        }}
+        .quick-actions {{
+            background: #e8f4fd;
+            border-radius: 12px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }}
+        .quick-actions h3 {{
+            font-size: 13px;
+            color: #1976d2;
+            margin-bottom: 10px;
+        }}
+        .action-buttons {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }}
+        .action-btn {{
+            padding: 8px 14px;
+            border-radius: 6px;
+            font-size: 13px;
             font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s;
             text-decoration: none;
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
+            display: inline-block;
+            transition: all 0.2s;
         }}
-        .delay-btn.complete {{
-            background: #dcfce7;
-            color: #166534;
-        }}
-        .delay-btn.complete:hover {{
-            background: #166534;
-            color: white;
-        }}
-        .delay-btn.hour {{
-            background: #e0f2fe;
-            color: #0369a1;
-        }}
-        .delay-btn.hour:hover {{
-            background: #0369a1;
-            color: white;
-        }}
-        .delay-btn.day {{
-            background: #fef3c7;
-            color: #b45309;
-        }}
-        .delay-btn.day:hover {{
-            background: #b45309;
-            color: white;
-        }}
-        .delay-btn.week {{
-            background: #f3e8ff;
-            color: #7c3aed;
-        }}
-        .delay-btn.week:hover {{
-            background: #7c3aed;
-            color: white;
-        }}
-        .delay-btn.custom {{
-            background: #f1f5f9;
-            color: #475569;
-        }}
-        .delay-btn.custom:hover {{
-            background: #475569;
-            color: white;
-        }}
-        
-        /* Checklist Items */
-        .checklist-section h3 {{
-            font-size: 14px;
-            color: #374151;
-            margin-bottom: 12px;
+        .btn-complete {{ background: #d4edda; color: #155724; }}
+        .btn-complete:hover {{ background: #28a745; color: white; }}
+        .btn-hour {{ background: #cce5ff; color: #004085; }}
+        .btn-hour:hover {{ background: #007bff; color: white; }}
+        .btn-day {{ background: #fff3cd; color: #856404; }}
+        .btn-day:hover {{ background: #ffc107; color: #333; }}
+        .btn-week {{ background: #e2d5f1; color: #6f42c1; }}
+        .btn-week:hover {{ background: #6f42c1; color: white; }}
+        .btn-custom {{ background: #e2e3e5; color: #383d41; }}
+        .btn-custom:hover {{ background: #6c757d; color: white; }}
+        .section-title {{
+            font-size: 13px;
             font-weight: 600;
+            color: #333;
+            margin-bottom: 10px;
         }}
         .checklist-item {{
             display: flex;
             align-items: flex-start;
-            padding: 14px 0;
-            border-bottom: 1px solid #f3f4f6;
-            gap: 12px;
+            padding: 12px 0;
+            border-bottom: 1px solid #f0f0f0;
         }}
-        .checklist-item:last-child {{
-            border-bottom: none;
-        }}
+        .checklist-item:last-child {{ border-bottom: none; }}
         .checklist-item input[type="checkbox"] {{
-            width: 22px;
-            height: 22px;
+            width: 20px;
+            height: 20px;
+            margin-right: 12px;
             margin-top: 2px;
-            accent-color: #667eea;
             cursor: pointer;
-            flex-shrink: 0;
+            accent-color: #667eea;
         }}
         .checklist-item label {{
             flex: 1;
-            font-size: 15px;
-            line-height: 1.5;
             cursor: pointer;
+            line-height: 1.5;
+            color: #333;
         }}
         .checklist-item.completed label {{
-            color: #9ca3af;
             text-decoration: line-through;
+            color: #999;
         }}
-        
-        /* Add New Item Section */
-        .add-item-section {{
-            background: #f0fdf4;
+        .add-section {{
+            background: #e8f5e9;
             border-radius: 12px;
-            padding: 16px;
+            padding: 15px;
             margin: 20px 0;
         }}
-        .add-item-section h3 {{
-            font-size: 14px;
-            color: #166534;
-            margin-bottom: 12px;
-            font-weight: 600;
+        .add-section h3 {{
+            font-size: 13px;
+            color: #2e7d32;
+            margin-bottom: 10px;
         }}
-        .add-item-row {{
+        .add-row {{
             display: flex;
             gap: 10px;
         }}
-        .add-item-input {{
+        .add-row input[type="text"] {{
             flex: 1;
-            padding: 12px 14px;
-            border: 2px solid #d1fae5;
+            padding: 10px 14px;
+            border: 2px solid #c8e6c9;
             border-radius: 8px;
             font-size: 14px;
-            transition: border-color 0.2s;
         }}
-        .add-item-input:focus {{
+        .add-row input[type="text"]:focus {{
             outline: none;
-            border-color: #10b981;
+            border-color: #4caf50;
         }}
-        .add-item-btn {{
-            padding: 12px 20px;
-            background: #10b981;
+        .add-btn {{
+            padding: 10px 20px;
+            background: #4caf50;
             color: white;
             border: none;
             border-radius: 8px;
             font-size: 14px;
             font-weight: 600;
             cursor: pointer;
-            transition: background 0.2s;
-            white-space: nowrap;
         }}
-        .add-item-btn:hover {{
-            background: #059669;
-        }}
-        
-        /* Save Button */
-        .save-btn {{
+        .add-btn:hover {{ background: #43a047; }}
+        .submit-btn {{
             width: 100%;
-            padding: 16px;
+            padding: 15px;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
             border: none;
-            border-radius: 12px;
+            border-radius: 10px;
             font-size: 16px;
             font-weight: 600;
             cursor: pointer;
-            transition: transform 0.2s, box-shadow 0.2s;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-            margin-top: 20px;
+            margin-top: 10px;
         }}
-        .save-btn:hover {{
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
-        }}
-        
-        /* Empty state */
-        .empty-state {{
+        .submit-btn:hover {{ opacity: 0.9; }}
+        .no-items {{
             text-align: center;
-            padding: 24px;
-            color: #9ca3af;
+            padding: 30px;
+            color: #999;
         }}
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <h1>📋 Update Checklist</h1>
-            <div class="task-title">{task_title}</div>
+    <div class="card">
+        <h1>📋 Update Checklist</h1>
+        <div class="task-title">{task_title}</div>
+        
+        <div class="due-info">
+            ⏰ Currently due: {due_date} at {due_time}
         </div>
         
-        <div class="content">
-            <!-- Current Due Time -->
-            <div class="due-info">
-                ⏰ Currently due: {due_display}
+        <div class="quick-actions">
+            <h3>⚡ Quick Actions</h3>
+            <div class="action-buttons">
+                <a href="{action_url}?action=complete&task_id={task_id}" class="action-btn btn-complete">✅ Complete</a>
+                <a href="{action_url}?action=delay_1hour&task_id={task_id}" class="action-btn btn-hour">⏰ +1 Hour</a>
+                <a href="{action_url}?action=delay_1day&task_id={task_id}" class="action-btn btn-day">📅 +1 Day</a>
+                <a href="{action_url}?action=delay_1week&task_id={task_id}" class="action-btn btn-week">📆 +1 Week</a>
+                <a href="{action_url}?action=delay_custom&task_id={task_id}" class="action-btn btn-custom">🗓️ Custom</a>
             </div>
-            
-            <!-- Quick Actions Section -->
-            <div class="delay-section">
-                <h3>⚡ Quick Actions</h3>
-                <div class="delay-buttons">
-                    <a href="{action_url}?action=complete&task_id={task_id}" class="delay-btn complete">✅ Complete</a>
-                    <a href="{action_url}?action=delay_1hour&task_id={task_id}" class="delay-btn hour">⏰ +1 Hour</a>
-                    <a href="{action_url}?action=delay_1day&task_id={task_id}" class="delay-btn day">📅 +1 Day</a>
-                    <a href="{action_url}?action=delay_1week&task_id={task_id}" class="delay-btn week">📆 +1 Week</a>
-                    <a href="{action_url}?action=delay_custom&task_id={task_id}" class="delay-btn custom">🗓️ Custom</a>
-                </div>
-            </div>
-            
-            <!-- Checklist Form -->
-            <form method="POST" action="{action_url}/checklist_submit">
-                <input type="hidden" name="task_id" value="{task_id}">
-                
-                <div class="checklist-section">
-                    <h3>📝 Checklist Items ({remaining_count} remaining)</h3>
-                    {checklist_items}
-                </div>
-                
-                <!-- Add New Item -->
-                <div class="add-item-section">
-                    <h3>➕ Add New Item</h3>
-                    <div class="add-item-row">
-                        <input type="text" name="new_item" class="add-item-input" placeholder="Enter new checklist item...">
-                        <button type="submit" name="add_only" value="1" class="add-item-btn">Add</button>
-                    </div>
-                </div>
-                
-                <button type="submit" class="save-btn">
-                    💾 Save Changes
-                </button>
-            </form>
         </div>
+        
+        <form method="POST" action="{action_url}/checklist_submit">
+            <input type="hidden" name="task_id" value="{task_id}">
+            
+            <div class="section-title">📝 Checklist Items ({remaining_count} remaining)</div>
+            {checklist_items}
+            
+            <div class="add-section">
+                <h3>➕ Add New Item</h3>
+                <div class="add-row">
+                    <input type="text" name="new_item" placeholder="Enter new checklist item...">
+                    <button type="submit" name="action" value="add" class="add-btn">Add</button>
+                </div>
+            </div>
+            
+            <button type="submit" name="action" value="save" class="submit-btn">💾 Save Changes</button>
+        </form>
     </div>
 </body>
 </html>"""
 
-
-# ============================================
-# HELPER FUNCTIONS
-# ============================================
-
-def success_page(title, message, task_id=None, icon="✅"):
-    """Generate success page HTML"""
-    return SUCCESS_TEMPLATE.format(title=title, message=message, icon=icon)
-
-
-def error_page(message):
-    """Generate error page HTML"""
-    return ERROR_TEMPLATE.format(message=message)
-
-
-def get_next_status(current_status_id):
-    """Get the next project status in sequence"""
-    if not PROJECT_STATUSES:
-        return None
-    
-    current_order = None
-    for status in PROJECT_STATUSES:
-        if status['id'] == current_status_id:
-            current_order = status['display_order']
-            break
-    
-    if current_order is None:
-        return PROJECT_STATUSES[0] if PROJECT_STATUSES else None
-    
-    for status in PROJECT_STATUSES:
-        if status['display_order'] == current_order + 1:
-            return status
-    
-    return None
-
-
-def get_previous_status(current_status_id):
-    """Get the previous project status in sequence"""
-    if not PROJECT_STATUSES:
-        return None
-    
-    current_order = None
-    for status in PROJECT_STATUSES:
-        if status['id'] == current_status_id:
-            current_order = status['display_order']
-            break
-    
-    if current_order is None or current_order <= 1:
-        return None
-    
-    for status in PROJECT_STATUSES:
-        if status['display_order'] == current_order - 1:
-            return status
-    
-    return None
+CHECKLIST_SUCCESS_TEMPLATE = """<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>✅ Checklist Updated</title>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{ 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }}
+        .card {{
+            background: white;
+            border-radius: 16px;
+            padding: 40px;
+            max-width: 500px;
+            width: 100%;
+            text-align: center;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }}
+        .icon {{ font-size: 64px; margin-bottom: 20px; }}
+        h1 {{ color: #1a1a2e; margin-bottom: 15px; font-size: 24px; }}
+        .stats {{
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 20px;
+            margin: 20px 0;
+        }}
+        .stat-row {{
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #e9ecef;
+        }}
+        .stat-row:last-child {{ border-bottom: none; }}
+        .stat-label {{ color: #666; }}
+        .stat-value {{ font-weight: 600; color: #333; }}
+        .buttons {{
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }}
+        .btn {{
+            flex: 1;
+            padding: 12px 20px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 14px;
+            text-align: center;
+        }}
+        .btn-primary {{
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }}
+        .btn-success {{
+            background: #28a745;
+            color: white;
+        }}
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="icon">✅</div>
+        <h1>Checklist Updated!</h1>
+        <div class="stats">
+            <div class="stat-row">
+                <span class="stat-label">Completed:</span>
+                <span class="stat-value">{completed_count}</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Remaining:</span>
+                <span class="stat-value">{remaining_count}</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Total Items:</span>
+                <span class="stat-value">{total_count}</span>
+            </div>
+        </div>
+        <div class="buttons">
+            <a href="{action_url}?action=checklist&task_id={task_id}" class="btn btn-primary">📋 Edit Checklist</a>
+            <a href="{action_url}?action=complete&task_id={task_id}" class="btn btn-success">✅ Complete Task</a>
+        </div>
+    </div>
+</body>
+</html>"""
 
 
 # ============================================
@@ -540,129 +506,72 @@ def home():
     return {
         "service": "Rob CRM Task Actions",
         "status": "ok",
-        "version": "2.2-enhanced-checklist"
+        "version": "2.2.1-fixed"
     }
 
 
-@app.route('/action', methods=['GET'])
+@app.route('/action')
 def handle_action():
-    """Handle task action button clicks from emails"""
+    """Main action handler - processes button clicks from emails"""
     action = request.args.get('action')
     task_id = request.args.get('task_id')
     
-    if not action or not task_id:
-        return error_page("Missing action or task_id parameter")
+    if not task_id:
+        return ERROR_TEMPLATE.format(error="Missing task_id parameter")
     
     # Get task details
     try:
-        result = tm.supabase.table('tasks').select('*, project_statuses(*)').eq('id', task_id).execute()
+        result = tm.supabase.table('tasks').select('*').eq('id', task_id).execute()
         if not result.data:
-            return error_page(f"Task not found: {task_id}")
+            return ERROR_TEMPLATE.format(error=f"Task not found: {task_id}")
         task = result.data[0]
         task_title = task.get('title', 'Unknown Task')
     except Exception as e:
-        return error_page(f"Database error: {e}")
+        return ERROR_TEMPLATE.format(error=f"Database error: {str(e)}")
     
-    # Handle different actions
+    # Route to appropriate handler
     if action == 'complete':
-        try:
-            tm.supabase.table('tasks').update({
-                'status': 'completed',
-                'completed_at': datetime.now(pytz.UTC).isoformat()
-            }).eq('id', task_id).execute()
-            return success_page("Task Completed!", f"'{task_title}' has been marked as complete", task_id)
-        except Exception as e:
-            return error_page(f"Failed to complete task: {e}")
+        return handle_complete(task_id, task_title)
     
     elif action == 'delay_1hour':
-        success = tm.delay_task(task_id, timedelta(hours=1))
-        if success:
-            return success_page("Task Delayed!", f"'{task_title}' has been delayed by 1 hour", task_id, "⏰")
-        else:
-            return error_page("Failed to delay task")
+        return handle_delay(task_id, task_title, hours=1)
     
     elif action == 'delay_1day':
-        success = tm.delay_task(task_id, timedelta(days=1))
-        if success:
-            return success_page("Task Delayed!", f"'{task_title}' has been delayed by 1 day", task_id, "📅")
-        else:
-            return error_page("Failed to delay task")
+        return handle_delay(task_id, task_title, days=1)
     
     elif action == 'delay_1week':
-        success = tm.delay_task(task_id, timedelta(days=7))
-        if success:
-            return success_page("Task Delayed!", f"'{task_title}' has been delayed by 1 week", task_id, "📆")
-        else:
-            return error_page("Failed to delay task")
+        return handle_delay(task_id, task_title, days=7)
     
     elif action == 'delay_custom':
-        # Show custom delay form
-        aest = pytz.timezone('Australia/Brisbane')
-        now = datetime.now(aest)
-        current_date = task.get('due_date', now.date().isoformat())
-        current_time = task.get('due_time', '09:00')
-        if current_time and ':' in current_time:
-            current_time = current_time[:5]  # Get HH:MM only
-        
-        return CUSTOM_DELAY_TEMPLATE.format(
-            task_title=task_title,
-            task_id=task_id,
-            action_url=ACTION_URL,
-            current_date=current_date,
-            current_time=current_time
-        )
+        return handle_custom_delay_form(task_id, task_title, task)
     
     elif action == 'next_status':
-        current_status_id = task.get('project_status_id')
-        next_status = get_next_status(current_status_id)
-        
-        if next_status:
-            try:
-                tm.supabase.table('tasks').update({
-                    'project_status_id': next_status['id']
-                }).eq('id', task_id).execute()
-                return success_page("Status Updated!", f"'{task_title}' moved to: {next_status['name']}", task_id, "📈")
-            except Exception as e:
-                return error_page(f"Failed to update status: {e}")
-        else:
-            return error_page("Already at final status")
+        return handle_next_status(task_id, task_title, task)
     
     elif action == 'prev_status':
-        current_status_id = task.get('project_status_id')
-        prev_status = get_previous_status(current_status_id)
-        
-        if prev_status:
-            try:
-                tm.supabase.table('tasks').update({
-                    'project_status_id': prev_status['id']
-                }).eq('id', task_id).execute()
-                return success_page("Status Updated!", f"'{task_title}' moved to: {prev_status['name']}", task_id, "📉")
-            except Exception as e:
-                return error_page(f"Failed to update status: {e}")
-        else:
-            return error_page("Already at first status")
+        return handle_prev_status(task_id, task_title, task)
     
     elif action == 'checklist':
         return handle_checklist_form(task_id, task_title, task)
     
     else:
-        return error_page(f"Unknown action: {action}")
+        return ERROR_TEMPLATE.format(error=f"Unknown action: {action}")
 
 
 @app.route('/action/custom_delay', methods=['POST'])
-def handle_custom_delay():
-    """Handle custom delay form submission"""
+def handle_custom_delay_submit():
+    """Process custom delay form submission"""
     task_id = request.form.get('task_id')
     new_date = request.form.get('new_date')
     new_time = request.form.get('new_time')
     
-    if not task_id or not new_date or not new_time:
-        return error_page("Missing required fields")
+    if not all([task_id, new_date, new_time]):
+        return ERROR_TEMPLATE.format(error="Missing required fields")
     
     try:
         # Get task title
         result = tm.supabase.table('tasks').select('title').eq('id', task_id).execute()
-        task_title = result.data[0]['title'] if result.data else 'Task'
+        task_title = result.data[0]['title'] if result.data else 'Unknown Task'
         
         # Update task
         tm.supabase.table('tasks').update({
@@ -671,235 +580,340 @@ def handle_custom_delay():
             'status': 'pending'
         }).eq('id', task_id).execute()
         
-        # Format display time
-        try:
-            h, m = map(int, new_time.split(':'))
-            period = 'AM' if h < 12 else 'PM'
-            h12 = h if h <= 12 else h - 12
-            if h12 == 0:
-                h12 = 12
-            time_display = f"{h12}:{m:02d} {period}"
-        except:
-            time_display = new_time
+        # Format for display
+        aest = pytz.timezone('Australia/Brisbane')
+        dt = datetime.strptime(f"{new_date} {new_time}", "%Y-%m-%d %H:%M")
+        formatted_time = dt.strftime("%I:%M %p")
+        formatted_date = dt.strftime("%A, %B %d")
         
-        return success_page("Time Updated!", f"'{task_title}' rescheduled to {new_date} at {time_display}", task_id, "🗓️")
-    
+        return SUCCESS_TEMPLATE.format(
+            icon="📅",
+            title="Task Rescheduled",
+            task_title=task_title,
+            message=f"Rescheduled to {formatted_date} at {formatted_time}"
+        )
+        
     except Exception as e:
-        return error_page(f"Failed to update task: {e}")
+        return ERROR_TEMPLATE.format(error=f"Failed to reschedule: {str(e)}")
 
 
 @app.route('/action/checklist_submit', methods=['POST'])
 def handle_checklist_submit():
-    """Handle checklist form submission - update items and add new ones"""
+    """Process checklist form submission - FIXED VERSION using direct DB calls"""
     task_id = request.form.get('task_id')
+    action = request.form.get('action', 'save')
+    new_item = request.form.get('new_item', '').strip()
     
     if not task_id:
-        return error_page("No task ID provided")
+        return ERROR_TEMPLATE.format(error="Missing task_id")
     
-    # Get task info for success message
     try:
-        task = tm.supabase.table('tasks').select('title').eq('id', task_id).execute()
-        task_title = task.data[0]['title'] if task.data else 'Task'
-    except:
-        task_title = 'Task'
-    
-    # Handle new item addition
-    new_item = request.form.get('new_item', '').strip()
-    add_only = request.form.get('add_only')
-    
-    if new_item:
-        # Get current max display_order
-        existing = tm.get_checklist_items(task_id, include_completed=True)
-        max_order = max([i.get('display_order', 0) for i in existing], default=0)
+        # Get task title
+        result = tm.supabase.table('tasks').select('title').eq('id', task_id).execute()
+        task_title = result.data[0]['title'] if result.data else 'Unknown Task'
         
-        # Add new item
-        tm.add_checklist_item(task_id, new_item, max_order + 1)
+        # Handle adding new item
+        if new_item:
+            print(f"📝 Adding new checklist item: {new_item}")
+            
+            # Get max display_order using direct DB call
+            existing = tm.supabase.table('task_checklist_items')\
+                .select('display_order')\
+                .eq('task_id', task_id)\
+                .order('display_order', desc=True)\
+                .limit(1)\
+                .execute()
+            
+            max_order = existing.data[0]['display_order'] if existing.data else 0
+            
+            # Insert new item using direct DB call
+            tm.supabase.table('task_checklist_items').insert({
+                'task_id': task_id,
+                'item_text': new_item,
+                'is_completed': False,
+                'display_order': max_order + 1
+            }).execute()
+            
+            print(f"✅ Added checklist item with order {max_order + 1}")
+            
+            # If just adding (not saving), redirect back to form
+            if action == 'add':
+                return redirect(f"{ACTION_URL}?action=checklist&task_id={task_id}")
         
-        if add_only:
-            # Redirect back to checklist form to add more items
-            return redirect(f"{ACTION_URL}?action=checklist&task_id={task_id}")
-    
-    # Update completion status
-    completed_ids = request.form.getlist('completed_items')
-    tm.bulk_update_checklist(task_id, completed_ids)
-    
-    # Get updated counts
-    items = tm.get_checklist_items(task_id, include_completed=True)
-    total = len(items)
-    completed = len([i for i in items if i.get('is_completed')])
-    remaining = total - completed
-    
-    # Success page with stats
-    return f'''<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Checklist Updated</title>
-    <style>
-        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            padding: 20px;
-        }}
-        .card {{
-            background: white;
-            border-radius: 16px;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
-            padding: 40px;
-            text-align: center;
-            max-width: 450px;
-        }}
-        .icon {{ font-size: 64px; margin-bottom: 20px; }}
-        h1 {{ color: #1f2937; margin-bottom: 10px; font-size: 24px; }}
-        .task-name {{ color: #667eea; font-weight: 600; margin-bottom: 20px; }}
-        .stats {{
-            background: #f3f4f6;
-            padding: 20px;
-            border-radius: 12px;
-            margin: 20px 0;
-        }}
-        .stats-row {{
-            display: flex;
-            justify-content: space-around;
-        }}
-        .stat {{
-            text-align: center;
-        }}
-        .stat-num {{
-            font-size: 32px;
-            font-weight: 700;
-            color: #667eea;
-        }}
-        .stat-label {{
-            font-size: 13px;
-            color: #6b7280;
-            margin-top: 4px;
-        }}
-        .buttons {{
-            display: flex;
-            gap: 12px;
-            margin-top: 24px;
-            flex-wrap: wrap;
-            justify-content: center;
-        }}
-        .btn {{
-            padding: 14px 24px;
-            border-radius: 10px;
-            text-decoration: none;
-            font-weight: 600;
-            font-size: 14px;
-            transition: all 0.2s;
-        }}
-        .btn-primary {{
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-        }}
-        .btn-secondary {{
-            background: #f3f4f6;
-            color: #374151;
-        }}
-        .btn:hover {{
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-        }}
-    </style>
-</head>
-<body>
-    <div class="card">
-        <div class="icon">✅</div>
-        <h1>Checklist Updated!</h1>
-        <div class="task-name">{task_title}</div>
+        # Handle checkbox updates
+        checked_ids = request.form.getlist('completed')
+        print(f"📋 Checked item IDs: {checked_ids}")
         
-        <div class="stats">
-            <div class="stats-row">
-                <div class="stat">
-                    <div class="stat-num">{completed}</div>
-                    <div class="stat-label">Completed</div>
-                </div>
-                <div class="stat">
-                    <div class="stat-num">{remaining}</div>
-                    <div class="stat-label">Remaining</div>
-                </div>
-                <div class="stat">
-                    <div class="stat-num">{total}</div>
-                    <div class="stat-label">Total</div>
-                </div>
-            </div>
-        </div>
+        # Get all items for this task using direct DB call
+        all_items = tm.supabase.table('task_checklist_items')\
+            .select('*')\
+            .eq('task_id', task_id)\
+            .execute()
         
-        <div class="buttons">
-            <a href="{ACTION_URL}?action=checklist&task_id={task_id}" class="btn btn-primary">
-                📋 Edit Checklist
-            </a>
-            <a href="{ACTION_URL}?action=complete&task_id={task_id}" class="btn btn-secondary">
-                ✅ Complete Task
-            </a>
-        </div>
-    </div>
-</body>
-</html>'''
+        # Update each item's completion status
+        for item in all_items.data:
+            item_id = item['id']
+            should_be_completed = item_id in checked_ids
+            
+            if item['is_completed'] != should_be_completed:
+                update_data = {'is_completed': should_be_completed}
+                if should_be_completed:
+                    update_data['completed_at'] = datetime.now(pytz.UTC).isoformat()
+                else:
+                    update_data['completed_at'] = None
+                
+                tm.supabase.table('task_checklist_items')\
+                    .update(update_data)\
+                    .eq('id', item_id)\
+                    .execute()
+        
+        # Get final counts
+        final_items = tm.supabase.table('task_checklist_items')\
+            .select('*')\
+            .eq('task_id', task_id)\
+            .execute()
+        
+        total = len(final_items.data)
+        completed = len([i for i in final_items.data if i.get('is_completed')])
+        remaining = total - completed
+        
+        return CHECKLIST_SUCCESS_TEMPLATE.format(
+            completed_count=completed,
+            remaining_count=remaining,
+            total_count=total,
+            action_url=ACTION_URL,
+            task_id=task_id
+        )
+        
+    except Exception as e:
+        print(f"❌ Checklist submit error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return ERROR_TEMPLATE.format(error=f"Failed to update checklist: {str(e)}")
+
+
+# ============================================
+# ACTION HANDLERS
+# ============================================
+
+def handle_complete(task_id, task_title):
+    """Mark task as complete"""
+    try:
+        tm.supabase.table('tasks').update({
+            'status': 'completed',
+            'completed_at': datetime.now(pytz.UTC).isoformat()
+        }).eq('id', task_id).execute()
+        
+        return SUCCESS_TEMPLATE.format(
+            icon="✅",
+            title="Task Completed!",
+            task_title=task_title,
+            message="Great job! This task has been marked as complete."
+        )
+    except Exception as e:
+        return ERROR_TEMPLATE.format(error=f"Failed to complete task: {str(e)}")
+
+
+def handle_delay(task_id, task_title, hours=0, days=0):
+    """Delay task by specified time"""
+    try:
+        # Get current task
+        result = tm.supabase.table('tasks').select('*').eq('id', task_id).execute()
+        if not result.data:
+            return ERROR_TEMPLATE.format(error="Task not found")
+        
+        task = result.data[0]
+        aest = pytz.timezone('Australia/Brisbane')
+        now = datetime.now(aest)
+        
+        # Parse current due date/time
+        due_date_str = task.get('due_date')
+        due_time_str = task.get('due_time')
+        
+        if due_date_str and due_time_str:
+            # Handle microseconds in time string
+            parts = due_time_str.split(':')
+            h, m = int(parts[0]), int(parts[1])
+            s = int(float(parts[2])) if len(parts) > 2 else 0
+            
+            due_date = datetime.strptime(due_date_str, "%Y-%m-%d").date()
+            current_dt = datetime.combine(due_date, datetime.min.time().replace(hour=h, minute=m, second=s))
+            current_dt = aest.localize(current_dt)
+        else:
+            current_dt = now
+        
+        # Calculate new time
+        new_dt = current_dt + timedelta(hours=hours, days=days)
+        
+        # Update task
+        tm.supabase.table('tasks').update({
+            'due_date': new_dt.date().isoformat(),
+            'due_time': new_dt.strftime('%H:%M:%S'),
+            'status': 'pending'
+        }).eq('id', task_id).execute()
+        
+        # Format message
+        if hours:
+            delay_text = f"{hours} hour{'s' if hours > 1 else ''}"
+        else:
+            delay_text = f"{days} day{'s' if days > 1 else ''}"
+        
+        return SUCCESS_TEMPLATE.format(
+            icon="⏰",
+            title=f"Delayed {delay_text}",
+            task_title=task_title,
+            message=f"New due time: {new_dt.strftime('%I:%M %p')} on {new_dt.strftime('%A, %B %d')}"
+        )
+        
+    except Exception as e:
+        return ERROR_TEMPLATE.format(error=f"Failed to delay task: {str(e)}")
+
+
+def handle_custom_delay_form(task_id, task_title, task):
+    """Show custom delay form"""
+    aest = pytz.timezone('Australia/Brisbane')
+    now = datetime.now(aest)
+    
+    # Default to tomorrow same time
+    default_date = (now + timedelta(days=1)).strftime("%Y-%m-%d")
+    default_time = task.get('due_time', '09:00:00')[:5]  # HH:MM only
+    
+    return CUSTOM_DELAY_TEMPLATE.format(
+        task_id=task_id,
+        task_title=task_title,
+        action_url=ACTION_URL,
+        default_date=default_date,
+        default_time=default_time
+    )
+
+
+def handle_next_status(task_id, task_title, task):
+    """Move to next project status"""
+    try:
+        current_status_id = task.get('project_status_id')
+        
+        if not PROJECT_STATUSES:
+            return ERROR_TEMPLATE.format(error="No project statuses configured")
+        
+        # Find current position and move to next
+        current_idx = -1
+        for i, status in enumerate(PROJECT_STATUSES):
+            if status['id'] == current_status_id:
+                current_idx = i
+                break
+        
+        if current_idx < len(PROJECT_STATUSES) - 1:
+            new_status = PROJECT_STATUSES[current_idx + 1]
+        else:
+            new_status = PROJECT_STATUSES[-1]  # Stay at last
+        
+        # Update task
+        tm.supabase.table('tasks').update({
+            'project_status_id': new_status['id']
+        }).eq('id', task_id).execute()
+        
+        return SUCCESS_TEMPLATE.format(
+            icon="⏭️",
+            title="Status Updated",
+            task_title=task_title,
+            message=f"Moved to: {new_status.get('emoji', '')} {new_status['name']}"
+        )
+        
+    except Exception as e:
+        return ERROR_TEMPLATE.format(error=f"Failed to update status: {str(e)}")
+
+
+def handle_prev_status(task_id, task_title, task):
+    """Move to previous project status"""
+    try:
+        current_status_id = task.get('project_status_id')
+        
+        if not PROJECT_STATUSES:
+            return ERROR_TEMPLATE.format(error="No project statuses configured")
+        
+        # Find current position and move to previous
+        current_idx = 0
+        for i, status in enumerate(PROJECT_STATUSES):
+            if status['id'] == current_status_id:
+                current_idx = i
+                break
+        
+        if current_idx > 0:
+            new_status = PROJECT_STATUSES[current_idx - 1]
+        else:
+            new_status = PROJECT_STATUSES[0]  # Stay at first
+        
+        # Update task
+        tm.supabase.table('tasks').update({
+            'project_status_id': new_status['id']
+        }).eq('id', task_id).execute()
+        
+        return SUCCESS_TEMPLATE.format(
+            icon="⏮️",
+            title="Status Updated",
+            task_title=task_title,
+            message=f"Moved to: {new_status.get('emoji', '')} {new_status['name']}"
+        )
+        
+    except Exception as e:
+        return ERROR_TEMPLATE.format(error=f"Failed to update status: {str(e)}")
 
 
 def handle_checklist_form(task_id, task_title, task):
-    """Display checklist form with delay buttons and add item feature"""
-    # Get checklist items
-    items = tm.get_checklist_items(task_id, include_completed=True)
-    
-    # Build due display
-    aest = pytz.timezone('Australia/Brisbane')
-    due_date = task.get('due_date', 'Not set')
-    due_time = task.get('due_time', '')
-    
-    if due_time:
-        try:
-            parts = due_time.split(':')
-            h, m = int(parts[0]), int(parts[1])
-            # Convert to 12-hour format
-            period = 'AM' if h < 12 else 'PM'
-            h12 = h if h <= 12 else h - 12
-            if h12 == 0:
-                h12 = 12
-            due_display = f"{due_date} at {h12}:{m:02d} {period} AEST"
-        except:
-            due_display = f"{due_date} at {due_time}"
-    else:
-        due_display = f"{due_date} (no time set)"
-    
-    # Count remaining items
-    remaining_count = len([i for i in items if not i.get('is_completed')])
-    
-    # Build checklist HTML
-    if items:
-        items_html = ""
-        for item in items:
-            checked = "checked" if item.get('is_completed') else ""
-            completed_class = "completed" if item.get('is_completed') else ""
-            items_html += f'''
+    """Display checklist management form"""
+    try:
+        # Get checklist items using direct DB call
+        items_result = tm.supabase.table('task_checklist_items')\
+            .select('*')\
+            .eq('task_id', task_id)\
+            .order('display_order')\
+            .execute()
+        
+        items = items_result.data if items_result.data else []
+        
+        # Build checklist HTML
+        if items:
+            items_html = ""
+            for item in items:
+                checked = "checked" if item.get('is_completed') else ""
+                completed_class = "completed" if item.get('is_completed') else ""
+                items_html += f"""
                 <div class="checklist-item {completed_class}">
-                    <input type="checkbox" name="completed_items" value="{item['id']}" id="item_{item['id']}" {checked}>
+                    <input type="checkbox" name="completed" value="{item['id']}" id="item_{item['id']}" {checked}>
                     <label for="item_{item['id']}">{item['item_text']}</label>
                 </div>
-            '''
-    else:
-        items_html = '<div class="empty-state">No checklist items yet. Add one below!</div>'
-    
-    # Build final HTML
-    html = CHECKLIST_TEMPLATE.format(
-        task_title=task_title,
-        task_id=task_id,
-        action_url=ACTION_URL,
-        checklist_items=items_html,
-        remaining_count=remaining_count,
-        due_display=due_display
-    )
-    
-    return html
+                """
+        else:
+            items_html = '<div class="no-items">No checklist items yet. Add one below!</div>'
+        
+        # Count remaining
+        remaining = len([i for i in items if not i.get('is_completed')])
+        
+        # Format due date/time
+        due_date = task.get('due_date', 'Not set')
+        due_time_str = task.get('due_time', '')
+        if due_time_str:
+            parts = due_time_str.split(':')
+            h, m = int(parts[0]), int(parts[1])
+            due_time = datetime.strptime(f"{h}:{m}", "%H:%M").strftime("%I:%M %p")
+        else:
+            due_time = 'Not set'
+        
+        return CHECKLIST_TEMPLATE.format(
+            task_id=task_id,
+            task_title=task_title,
+            action_url=ACTION_URL,
+            checklist_items=items_html,
+            remaining_count=remaining,
+            due_date=due_date,
+            due_time=due_time
+        )
+        
+    except Exception as e:
+        print(f"❌ Checklist form error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return ERROR_TEMPLATE.format(error=f"Failed to load checklist: {str(e)}")
 
 
 # ============================================
@@ -908,4 +922,4 @@ def handle_checklist_form(task_id, task_title, task):
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 8080))
-    app.run(host='0.0.0.0', port=port, debug=False)
+    app.run(host='0.0.0.0', port=port)
