@@ -416,7 +416,9 @@ class TaskManager:
             current_date = datetime.strptime(task['due_date'], '%Y-%m-%d')
             
             if task.get('due_time'):
-                h, m, s = map(int, task['due_time'].split(':'))
+                parts = task['due_time'].split(':')
+                h, m = int(parts[0]), int(parts[1])
+                s = int(float(parts[2])) if len(parts) > 2 else 0
                 current_datetime = current_date.replace(hour=h, minute=m, second=s)
             else:
                 current_datetime = current_date.replace(hour=8, minute=0, second=0)
