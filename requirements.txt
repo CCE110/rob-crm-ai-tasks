@@ -7,3 +7,5 @@ pytz==2025.2
 schedule==1.2.2
 sendgrid==6.11.0
 requests
+stripe==7.0.0
+resend==0.7.2
