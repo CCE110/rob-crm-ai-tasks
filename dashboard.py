@@ -637,8 +637,71 @@ BASE_TEMPLATE = """
 # ============================================
 
 LOGIN_TEMPLATE = """
-{% extends "base" %}
-{% block content %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Jottask</title>
+    <style>
+        :root {
+            --primary: #6366F1;
+            --primary-dark: #4F46E5;
+            --success: #10B981;
+            --gray-50: #F9FAFB;
+            --gray-100: #F3F4F6;
+            --gray-300: #D1D5DB;
+            --gray-500: #6B7280;
+            --gray-700: #374151;
+            --gray-900: #111827;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+        .auth-container {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%);
+            padding: 20px;
+        }
+        .auth-card {
+            background: white;
+            border-radius: 16px;
+            padding: 40px;
+            width: 100%;
+            max-width: 420px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+        }
+        .auth-logo { text-align: center; margin-bottom: 32px; }
+        .auth-logo svg { width: 48px; height: 48px; }
+        .auth-logo h1 { color: var(--primary); font-size: 24px; margin-top: 12px; }
+        .form-group { margin-bottom: 16px; }
+        .form-label { display: block; margin-bottom: 6px; font-weight: 500; font-size: 14px; color: var(--gray-700); }
+        .form-input {
+            width: 100%;
+            padding: 10px 14px;
+            border: 1px solid var(--gray-300);
+            border-radius: 8px;
+            font-size: 14px;
+        }
+        .form-input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1); }
+        .btn {
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 14px;
+            cursor: pointer;
+            border: none;
+            text-decoration: none;
+        }
+        .btn-primary { background: var(--primary); color: white; }
+        .btn-primary:hover { background: var(--primary-dark); }
+        .alert { padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; font-size: 14px; }
+        .alert-error { background: #FEE2E2; color: #991B1B; }
+    </style>
+</head>
+<body>
 <div class="auth-container">
     <div class="auth-card">
         <div class="auth-logo">
@@ -685,12 +748,76 @@ LOGIN_TEMPLATE = """
         </p>
     </div>
 </div>
-{% endblock %}
+</body>
+</html>
 """
 
 SIGNUP_TEMPLATE = """
-{% extends "base" %}
-{% block content %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sign Up - Jottask</title>
+    <style>
+        :root {
+            --primary: #6366F1;
+            --primary-dark: #4F46E5;
+            --success: #10B981;
+            --gray-50: #F9FAFB;
+            --gray-100: #F3F4F6;
+            --gray-300: #D1D5DB;
+            --gray-500: #6B7280;
+            --gray-700: #374151;
+            --gray-900: #111827;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+        .auth-container {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%);
+            padding: 20px;
+        }
+        .auth-card {
+            background: white;
+            border-radius: 16px;
+            padding: 40px;
+            width: 100%;
+            max-width: 420px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+        }
+        .auth-logo { text-align: center; margin-bottom: 32px; }
+        .auth-logo svg { width: 48px; height: 48px; }
+        .auth-logo h1 { color: var(--primary); font-size: 24px; margin-top: 12px; }
+        .form-group { margin-bottom: 16px; }
+        .form-label { display: block; margin-bottom: 6px; font-weight: 500; font-size: 14px; color: var(--gray-700); }
+        .form-input {
+            width: 100%;
+            padding: 10px 14px;
+            border: 1px solid var(--gray-300);
+            border-radius: 8px;
+            font-size: 14px;
+        }
+        .form-input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1); }
+        .btn {
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 14px;
+            cursor: pointer;
+            border: none;
+            text-decoration: none;
+        }
+        .btn-primary { background: var(--primary); color: white; }
+        .btn-primary:hover { background: var(--primary-dark); }
+        .alert { padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; font-size: 14px; }
+        .alert-error { background: #FEE2E2; color: #991B1B; }
+    </style>
+</head>
+<body>
 <div class="auth-container">
     <div class="auth-card">
         <div class="auth-logo">
@@ -760,7 +887,8 @@ SIGNUP_TEMPLATE = """
         </p>
     </div>
 </div>
-{% endblock %}
+</body>
+</html>
 """
 
 # ============================================
@@ -1715,13 +1843,13 @@ def login():
 
                 return redirect(url_for('dashboard'))
             else:
-                return render_template_string(LOGIN_TEMPLATE, title='Login', error='Invalid credentials', **{'base': BASE_TEMPLATE})
+                return render_template_string(LOGIN_TEMPLATE, error='Invalid credentials')
 
         except Exception as e:
             error_msg = 'Invalid email or password'
-            return render_template_string(LOGIN_TEMPLATE, title='Login', error=error_msg, **{'base': BASE_TEMPLATE})
+            return render_template_string(LOGIN_TEMPLATE, error=error_msg)
 
-    return render_template_string(LOGIN_TEMPLATE, title='Login', error=None, **{'base': BASE_TEMPLATE})
+    return render_template_string(LOGIN_TEMPLATE, error=None)
 
 
 @app.route('/signup', methods=['GET', 'POST'])
@@ -1762,9 +1890,9 @@ def signup():
             error_msg = str(e)
             if 'already registered' in error_msg.lower():
                 error_msg = 'Email already registered'
-            return render_template_string(SIGNUP_TEMPLATE, title='Sign Up', error=error_msg, **{'base': BASE_TEMPLATE})
+            return render_template_string(SIGNUP_TEMPLATE, error=error_msg)
 
-    return render_template_string(SIGNUP_TEMPLATE, title='Sign Up', error=None, **{'base': BASE_TEMPLATE})
+    return render_template_string(SIGNUP_TEMPLATE, error=None)
 
 
 @app.route('/logout')
