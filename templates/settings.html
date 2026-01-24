@@ -1,0 +1,150 @@
+{% extends "base" %}
+{% block content %}
+<nav class="nav">
+    <a href="{{ url_for('dashboard') }}" class="nav-brand">
+        <svg viewBox="0 0 512 512" width="32" height="32">
+            <defs>
+                <linearGradient id="grad3" x1="0%" y1="0%" x2="0%" y2="100%">
+                    <stop offset="0%" style="stop-color:#8B5CF6" />
+                    <stop offset="100%" style="stop-color:#6366F1" />
+                </linearGradient>
+            </defs>
+            <rect width="512" height="512" rx="96" fill="white"/>
+            <rect x="120" y="80" width="220" height="300" rx="24" fill="url(#grad3)"/>
+            <circle cx="310" cy="350" r="70" fill="#10B981"/>
+            <path d="M275 350 L300 375 L355 315" fill="none" stroke="white" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        Jottask
+    </a>
+
+    <div class="nav-links">
+        <a href="{{ url_for('dashboard') }}" class="nav-link">Tasks</a>
+        <a href="{{ url_for('projects') }}" class="nav-link">Projects</a>
+        <a href="{{ url_for('settings') }}" class="nav-link active">Settings</a>
+    </div>
+
+    <div class="nav-user">
+        <span style="color: var(--gray-500);">{{ session.user_name }}</span>
+        <div class="avatar">{{ session.user_name[0].upper() }}</div>
+        <a href="{{ url_for('logout') }}" class="btn btn-secondary btn-sm">Logout</a>
+    </div>
+</nav>
+
+<main class="main">
+    {% if message %}
+    <div class="alert alert-success">{{ message }}</div>
+    {% endif %}
+
+    <div style="display: grid; grid-template-columns: 250px 1fr; gap: 24px;">
+        <!-- Sidebar -->
+        <div>
+            <div class="card">
+                <div class="card-body" style="padding: 8px;">
+                    <a href="#profile" class="nav-link active" style="display: block;">Profile</a>
+                    <a href="#notifications" class="nav-link" style="display: block;">Notifications</a>
+                    <a href="#email" class="nav-link" style="display: block;">Email Connection</a>
+                    <a href="#subscription" class="nav-link" style="display: block;">Subscription</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Content -->
+        <div>
+            <!-- Profile Section -->
+            <div class="card" style="margin-bottom: 24px;">
+                <div class="card-header">
+                    <h2 class="card-title">Profile Settings</h2>
+                </div>
+                <div class="card-body">
+                    <form method="POST" action="{{ url_for('update_profile') }}">
+                        <div class="form-group">
+                            <label class="form-label">Full Name</label>
+                            <input type="text" name="full_name" class="form-input" value="{{ user.full_name or '' }}">
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Email</label>
+                            <input type="email" class="form-input" value="{{ user.email }}" disabled>
+                            <small style="color: var(--gray-500);">Contact support to change email</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Company Name</label>
+                            <input type="text" name="company_name" class="form-input" value="{{ user.company_name or '' }}">
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Timezone</label>
+                            <select name="timezone" class="form-input">
+                                <option value="Australia/Brisbane" {% if user.timezone == 'Australia/Brisbane' %}selected{% endif %}>Australia/Brisbane (AEST)</option>
+                                <option value="Australia/Sydney" {% if user.timezone == 'Australia/Sydney' %}selected{% endif %}>Australia/Sydney</option>
+                                <option value="Australia/Melbourne" {% if user.timezone == 'Australia/Melbourne' %}selected{% endif %}>Australia/Melbourne</option>
+                                <option value="America/New_York" {% if user.timezone == 'America/New_York' %}selected{% endif %}>US Eastern</option>
+                                <option value="Europe/London" {% if user.timezone == 'Europe/London' %}selected{% endif %}>UK (GMT/BST)</option>
+                            </select>
+                        </div>
+
+                        <button type="submit" class="btn btn-primary">Save Changes</button>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Daily Summary Section -->
+            <div class="card" style="margin-bottom: 24px;">
+                <div class="card-header">
+                    <h2 class="card-title">Daily Summary</h2>
+                </div>
+                <div class="card-body">
+                    <form method="POST" action="{{ url_for('update_summary_settings') }}">
+                        <div class="form-group">
+                            <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
+                                <input type="checkbox" name="daily_summary_enabled" {% if user.daily_summary_enabled %}checked{% endif %} style="width: 20px; height: 20px;">
+                                <span class="form-label" style="margin: 0;">Enable daily summary email</span>
+                            </label>
+                            <small style="color: var(--gray-500); display: block; margin-top: 8px;">
+                                Receive a daily email with your tasks and projects overview
+                            </small>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Summary Time</label>
+                            <select name="daily_summary_time" class="form-input" style="max-width: 200px;">
+                                <option value="06:00:00" {% if user.daily_summary_time == '06:00:00' %}selected{% endif %}>6:00 AM</option>
+                                <option value="07:00:00" {% if user.daily_summary_time == '07:00:00' %}selected{% endif %}>7:00 AM</option>
+                                <option value="08:00:00" {% if user.daily_summary_time == '08:00:00' or not user.daily_summary_time %}selected{% endif %}>8:00 AM</option>
+                                <option value="09:00:00" {% if user.daily_summary_time == '09:00:00' %}selected{% endif %}>9:00 AM</option>
+                            </select>
+                            <small style="color: var(--gray-500);">Time in your local timezone ({{ user.timezone }})</small>
+                        </div>
+
+                        <button type="submit" class="btn btn-primary">Save Settings</button>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Subscription Section -->
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">Subscription</h2>
+                </div>
+                <div class="card-body">
+                    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 20px;">
+                        <span class="status-badge" style="background: {% if user.subscription_status == 'active' %}var(--success){% elif user.subscription_status == 'trial' %}var(--warning){% else %}var(--gray-300){% endif %}; color: white;">
+                            {{ user.subscription_status|capitalize }}
+                        </span>
+                        <span style="font-weight: 600;">{{ user.subscription_tier|capitalize }} Plan</span>
+                    </div>
+
+                    {% if user.subscription_status == 'trial' %}
+                    <p style="color: var(--gray-500); margin-bottom: 20px;">
+                        Your trial ends on {{ user.trial_ends_at[:10] if user.trial_ends_at else 'soon' }}
+                    </p>
+                    {% endif %}
+
+                    <a href="{{ url_for('billing') }}" class="btn btn-primary">Manage Subscription</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</main>
+{% endblock %}

@@ -1,0 +1,119 @@
+{% extends "base" %}
+{% block content %}
+<nav class="nav">
+    <a href="{{ url_for('dashboard') }}" class="nav-brand">
+        <svg viewBox="0 0 512 512" width="32" height="32">
+            <defs>
+                <linearGradient id="grad3" x1="0%" y1="0%" x2="0%" y2="100%">
+                    <stop offset="0%" style="stop-color:#8B5CF6" />
+                    <stop offset="100%" style="stop-color:#6366F1" />
+                </linearGradient>
+            </defs>
+            <rect width="512" height="512" rx="96" fill="white"/>
+            <rect x="120" y="80" width="220" height="300" rx="24" fill="url(#grad3)"/>
+            <circle cx="310" cy="350" r="70" fill="#10B981"/>
+            <path d="M275 350 L300 375 L355 315" fill="none" stroke="white" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        Jottask
+    </a>
+    <div class="nav-user">
+        <a href="{{ url_for('projects') }}" class="btn btn-secondary btn-sm">← Back to Projects</a>
+    </div>
+</nav>
+
+<main class="main" style="max-width: 600px;">
+    <div class="card">
+        <div class="card-header">
+            <h2 class="card-title">Create New Project</h2>
+        </div>
+        <form method="POST" class="card-body">
+            <div class="form-group">
+                <label class="form-label">Project Name *</label>
+                <input type="text" name="name" class="form-input" placeholder="Website Redesign" required>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">Description</label>
+                <textarea name="description" class="form-input" rows="3" placeholder="Project goals and details..."></textarea>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">Color</label>
+                <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                    <label class="color-option">
+                        <input type="radio" name="color" value="#6366F1" checked>
+                        <span style="background: #6366F1;"></span>
+                    </label>
+                    <label class="color-option">
+                        <input type="radio" name="color" value="#8B5CF6">
+                        <span style="background: #8B5CF6;"></span>
+                    </label>
+                    <label class="color-option">
+                        <input type="radio" name="color" value="#EC4899">
+                        <span style="background: #EC4899;"></span>
+                    </label>
+                    <label class="color-option">
+                        <input type="radio" name="color" value="#EF4444">
+                        <span style="background: #EF4444;"></span>
+                    </label>
+                    <label class="color-option">
+                        <input type="radio" name="color" value="#F59E0B">
+                        <span style="background: #F59E0B;"></span>
+                    </label>
+                    <label class="color-option">
+                        <input type="radio" name="color" value="#10B981">
+                        <span style="background: #10B981;"></span>
+                    </label>
+                    <label class="color-option">
+                        <input type="radio" name="color" value="#3B82F6">
+                        <span style="background: #3B82F6;"></span>
+                    </label>
+                    <label class="color-option">
+                        <input type="radio" name="color" value="#6B7280">
+                        <span style="background: #6B7280;"></span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">Initial Checklist Items (optional)</label>
+                <textarea name="initial_items" class="form-input" rows="4" placeholder="One item per line:&#10;Design mockups&#10;Build frontend&#10;Test and deploy"></textarea>
+                <small style="color: var(--gray-500);">Enter one item per line</small>
+            </div>
+
+            <div style="display: flex; gap: 12px; margin-top: 24px;">
+                <button type="submit" class="btn btn-primary" style="flex: 1;">Create Project</button>
+                <a href="{{ url_for('projects') }}" class="btn btn-secondary">Cancel</a>
+            </div>
+        </form>
+    </div>
+</main>
+
+<style>
+.color-option {
+    cursor: pointer;
+}
+
+.color-option input {
+    display: none;
+}
+
+.color-option span {
+    display: block;
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    border: 3px solid transparent;
+    transition: all 0.2s;
+}
+
+.color-option input:checked + span {
+    border-color: var(--gray-900);
+    transform: scale(1.1);
+}
+
+.color-option:hover span {
+    transform: scale(1.05);
+}
+</style>
+{% endblock %}

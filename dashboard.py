@@ -4,7 +4,7 @@ Full SaaS task management interface
 """
 
 import os
-from flask import Flask, render_template_string, request, redirect, url_for, session, jsonify, flash
+from flask import Flask, render_template_string, render_template, request, redirect, url_for, session, jsonify, flash
 from datetime import datetime, timedelta
 import pytz
 from functools import wraps
@@ -1933,13 +1933,12 @@ def dashboard():
         'completed_this_week': len([t for t in completed_tasks if t.get('completed_at')])  # Simplified
     }
 
-    return render_template_string(
-        DASHBOARD_TEMPLATE,
+    return render_template(
+        'dashboard.html',
         title='Dashboard',
         tasks=all_tasks,
         stats=stats,
-        today=today,
-        **{'base': BASE_TEMPLATE}
+        today=today
     )
 
 
@@ -2184,12 +2183,11 @@ def settings():
     user_id = session['user_id']
     user = supabase.table('users').select('*').eq('id', user_id).single().execute()
 
-    return render_template_string(
-        SETTINGS_TEMPLATE,
+    return render_template(
+        'settings.html',
         title='Settings',
         user=user.data,
-        message=request.args.get('message'),
-        **{'base': BASE_TEMPLATE}
+        message=request.args.get('message')
     )
 
 
@@ -2279,13 +2277,12 @@ def projects():
         'completed_items': len([i for i in all_items if i['is_completed']])
     }
 
-    return render_template_string(
-        PROJECTS_TEMPLATE,
+    return render_template(
+        'projects.html',
         title='Projects',
         projects=projects_list,
         stats=stats,
-        filter=filter_status,
-        **{'base': BASE_TEMPLATE}
+        filter=filter_status
     )
 
 
@@ -2330,10 +2327,9 @@ def project_create():
 
         return redirect(url_for('projects'))
 
-    return render_template_string(
-        PROJECT_CREATE_TEMPLATE,
-        title='Create Project',
-        **{'base': BASE_TEMPLATE}
+    return render_template(
+        'project_create.html',
+        title='Create Project'
     )
 
 
@@ -2365,15 +2361,14 @@ def project_detail(project_id):
     completed_count = len([i for i in items_list if i['is_completed']])
     progress = int((completed_count / total_count * 100)) if total_count else 0
 
-    return render_template_string(
-        PROJECT_DETAIL_TEMPLATE,
+    return render_template(
+        'project_detail.html',
         title=project.data['name'],
         project=project.data,
         items=items_list,
         total_count=total_count,
         completed_count=completed_count,
-        progress=progress,
-        **{'base': BASE_TEMPLATE}
+        progress=progress
     )
 
 

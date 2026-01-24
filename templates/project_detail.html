@@ -1,0 +1,178 @@
+{% extends "base" %}
+{% block content %}
+<nav class="nav">
+    <a href="{{ url_for('dashboard') }}" class="nav-brand">
+        <svg viewBox="0 0 512 512" width="32" height="32">
+            <defs>
+                <linearGradient id="grad3" x1="0%" y1="0%" x2="0%" y2="100%">
+                    <stop offset="0%" style="stop-color:#8B5CF6" />
+                    <stop offset="100%" style="stop-color:#6366F1" />
+                </linearGradient>
+            </defs>
+            <rect width="512" height="512" rx="96" fill="white"/>
+            <rect x="120" y="80" width="220" height="300" rx="24" fill="url(#grad3)"/>
+            <circle cx="310" cy="350" r="70" fill="#10B981"/>
+            <path d="M275 350 L300 375 L355 315" fill="none" stroke="white" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        Jottask
+    </a>
+    <div class="nav-user">
+        <a href="{{ url_for('projects') }}" class="btn btn-secondary btn-sm">← Back to Projects</a>
+    </div>
+</nav>
+
+<main class="main" style="max-width: 800px;">
+    <!-- Project Header -->
+    <div class="card" style="margin-bottom: 24px;">
+        <div class="card-body">
+            <div style="display: flex; align-items: start; justify-content: space-between; margin-bottom: 16px;">
+                <div style="display: flex; align-items: center; gap: 16px;">
+                    <div style="width: 12px; height: 48px; border-radius: 6px; background: {{ project.color or '#6366F1' }};"></div>
+                    <div>
+                        <h1 style="font-size: 24px; margin-bottom: 4px;">{{ project.name }}</h1>
+                        <span class="status-badge" style="background: {% if project.status == 'active' %}var(--primary){% elif project.status == 'completed' %}var(--success){% else %}var(--gray-300){% endif %}; color: white;">
+                            {{ project.status|capitalize }}
+                        </span>
+                    </div>
+                </div>
+                <div style="display: flex; gap: 8px;">
+                    {% if project.status == 'active' %}
+                    <form method="POST" action="{{ url_for('project_complete', project_id=project.id) }}" style="display: inline;">
+                        <button type="submit" class="btn btn-success btn-sm">Mark Complete</button>
+                    </form>
+                    {% elif project.status == 'completed' %}
+                    <form method="POST" action="{{ url_for('project_reopen', project_id=project.id) }}" style="display: inline;">
+                        <button type="submit" class="btn btn-secondary btn-sm">Reopen</button>
+                    </form>
+                    {% endif %}
+                    <form method="POST" action="{{ url_for('project_delete', project_id=project.id) }}" onsubmit="return confirm('Delete this project and all its items?');" style="display: inline;">
+                        <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+                    </form>
+                </div>
+            </div>
+
+            {% if project.description %}
+            <p style="color: var(--gray-600); margin-bottom: 16px;">{{ project.description }}</p>
+            {% endif %}
+
+            <!-- Progress Bar -->
+            <div style="display: flex; align-items: center; gap: 12px;">
+                <div style="flex: 1; height: 12px; background: var(--gray-200); border-radius: 6px; overflow: hidden;">
+                    <div style="height: 100%; background: var(--success); width: {{ progress }}%; transition: width 0.3s;"></div>
+                </div>
+                <span style="font-weight: 600; color: var(--gray-700);">{{ completed_count }}/{{ total_count }} ({{ progress }}%)</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Checklist Items -->
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">Checklist</h3>
+        </div>
+        <div class="card-body">
+            {% if items %}
+            <div class="checklist">
+                {% for item in items %}
+                <div class="checklist-item {% if item.is_completed %}completed{% endif %}">
+                    <form method="POST" action="{{ url_for('project_item_toggle', project_id=project.id, item_id=item.id) }}" style="display: contents;">
+                        <button type="submit" class="item-checkbox {% if item.is_completed %}checked{% endif %}">
+                            {% if item.is_completed %}✓{% endif %}
+                        </button>
+                    </form>
+                    <span class="item-text">{{ item.item_text }}</span>
+                    <span class="item-source" style="font-size: 11px; color: var(--gray-400); margin-left: auto;">{{ item.source }}</span>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p style="color: var(--gray-500); text-align: center; padding: 20px;">No items yet</p>
+            {% endif %}
+
+            <!-- Add Item Form -->
+            <form method="POST" action="{{ url_for('project_item_add', project_id=project.id) }}" style="margin-top: 20px; display: flex; gap: 8px;">
+                <input type="text" name="item_text" class="form-input" placeholder="Add a checklist item..." required style="flex: 1;">
+                <button type="submit" class="btn btn-primary">Add</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Project Info -->
+    <div class="card" style="margin-top: 24px;">
+        <div class="card-header">
+            <h3 class="card-title">Project Details</h3>
+        </div>
+        <div class="card-body" style="font-size: 14px;">
+            <div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--gray-100);">
+                <span style="color: var(--gray-500);">Created</span>
+                <span>{{ project.created_at[:10] if project.created_at else 'N/A' }}</span>
+            </div>
+            {% if project.completed_at %}
+            <div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--gray-100);">
+                <span style="color: var(--gray-500);">Completed</span>
+                <span>{{ project.completed_at[:10] }}</span>
+            </div>
+            {% endif %}
+            <div style="display: flex; justify-content: space-between; padding: 8px 0;">
+                <span style="color: var(--gray-500);">Color</span>
+                <div style="width: 20px; height: 20px; border-radius: 4px; background: {{ project.color or '#6366F1' }};"></div>
+            </div>
+        </div>
+    </div>
+</main>
+
+<style>
+.checklist {
+    display: flex;
+    flex-direction: column;
+}
+
+.checklist-item {
+    display: flex;
+    align-items: center;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--gray-100);
+    gap: 12px;
+}
+
+.checklist-item:last-child {
+    border-bottom: none;
+}
+
+.item-checkbox {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    border: 2px solid var(--gray-300);
+    background: white;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    color: white;
+    transition: all 0.2s;
+    flex-shrink: 0;
+}
+
+.item-checkbox:hover {
+    border-color: var(--success);
+    background: rgba(16, 185, 129, 0.1);
+}
+
+.item-checkbox.checked {
+    background: var(--success);
+    border-color: var(--success);
+}
+
+.checklist-item.completed .item-text {
+    text-decoration: line-through;
+    color: var(--gray-400);
+}
+
+.item-text {
+    flex: 1;
+    color: var(--gray-700);
+}
+</style>
+{% endblock %}

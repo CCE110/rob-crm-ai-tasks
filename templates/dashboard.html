@@ -1,0 +1,218 @@
+{% extends "base" %}
+{% block content %}
+<nav class="nav">
+    <a href="{{ url_for('dashboard') }}" class="nav-brand">
+        <svg viewBox="0 0 512 512" width="32" height="32">
+            <defs>
+                <linearGradient id="grad3" x1="0%" y1="0%" x2="0%" y2="100%">
+                    <stop offset="0%" style="stop-color:#8B5CF6" />
+                    <stop offset="100%" style="stop-color:#6366F1" />
+                </linearGradient>
+            </defs>
+            <rect width="512" height="512" rx="96" fill="white"/>
+            <rect x="120" y="80" width="220" height="300" rx="24" fill="url(#grad3)"/>
+            <circle cx="310" cy="350" r="70" fill="#10B981"/>
+            <path d="M275 350 L300 375 L355 315" fill="none" stroke="white" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        Jottask
+    </a>
+
+    <div class="nav-links">
+        <a href="{{ url_for('dashboard') }}" class="nav-link active">Tasks</a>
+        <a href="{{ url_for('projects') }}" class="nav-link">Projects</a>
+        <a href="{{ url_for('settings') }}" class="nav-link">Settings</a>
+    </div>
+
+    <div class="nav-user">
+        <span style="color: var(--gray-500);">{{ session.user_name }}</span>
+        <div class="avatar">{{ session.user_name[0].upper() }}</div>
+        <a href="{{ url_for('logout') }}" class="btn btn-secondary btn-sm">Logout</a>
+    </div>
+</nav>
+
+<main class="main">
+    <!-- Stats -->
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-value">{{ stats.pending }}</div>
+            <div class="stat-label">Pending Tasks</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">{{ stats.due_today }}</div>
+            <div class="stat-label">Due Today</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">{{ stats.overdue }}</div>
+            <div class="stat-label">Overdue</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">{{ stats.completed_this_week }}</div>
+            <div class="stat-label">Completed This Week</div>
+        </div>
+    </div>
+
+    <!-- Task Card -->
+    <div class="card">
+        <div class="card-header">
+            <h2 class="card-title">Tasks</h2>
+            <button class="btn btn-primary" onclick="openModal('new-task-modal')">
+                + New Task
+            </button>
+        </div>
+
+        <div class="tabs" style="padding: 0 20px;">
+            <div class="tab active" data-filter="all">All</div>
+            <div class="tab" data-filter="today">Today</div>
+            <div class="tab" data-filter="overdue">Overdue</div>
+            <div class="tab" data-filter="completed">Completed</div>
+        </div>
+
+        <div class="task-list">
+            {% if tasks %}
+                {% for task in tasks %}
+                <div class="task-item" data-task-id="{{ task.id }}">
+                    <div class="task-checkbox {% if task.status == 'completed' %}completed{% endif %}"
+                         onclick="toggleTask('{{ task.id }}', this)">
+                        {% if task.status == 'completed' %}✓{% endif %}
+                    </div>
+
+                    <div class="task-content">
+                        <div class="task-title">{{ task.title }}</div>
+                        <div class="task-meta">
+                            <span class="priority-{{ task.priority }}">{{ task.priority|capitalize }}</span>
+                            <span>Due: {{ task.due_date }} {{ task.due_time[:5] if task.due_time else '' }}</span>
+                            {% if task.client_name %}
+                            <span>{{ task.client_name }}</span>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    <div class="task-actions">
+                        <button class="btn btn-secondary btn-sm" onclick="openEditModal('{{ task.id }}')">Edit</button>
+                        <button class="btn btn-secondary btn-sm" onclick="openDelayModal('{{ task.id }}')">Delay</button>
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="empty-state">
+                    <div class="empty-state-icon">📋</div>
+                    <h3>No tasks yet</h3>
+                    <p>Create your first task to get started</p>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</main>
+
+<!-- New Task Modal -->
+<div id="new-task-modal" class="modal-backdrop" onclick="if(event.target === this) closeModal('new-task-modal')">
+    <div class="modal">
+        <div class="modal-header">
+            <h3 class="modal-title">New Task</h3>
+            <button class="modal-close" onclick="closeModal('new-task-modal')">&times;</button>
+        </div>
+        <form method="POST" action="{{ url_for('create_task') }}">
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label">Title</label>
+                    <input type="text" name="title" class="form-input" required>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Description</label>
+                    <textarea name="description" class="form-input" rows="3"></textarea>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                    <div class="form-group">
+                        <label class="form-label">Due Date</label>
+                        <input type="date" name="due_date" class="form-input" value="{{ today }}">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Due Time</label>
+                        <input type="time" name="due_time" class="form-input" value="09:00">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Priority</label>
+                    <select name="priority" class="form-input">
+                        <option value="low">Low</option>
+                        <option value="medium" selected>Medium</option>
+                        <option value="high">High</option>
+                        <option value="urgent">Urgent</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Client Name (optional)</label>
+                    <input type="text" name="client_name" class="form-input">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('new-task-modal')">Cancel</button>
+                <button type="submit" class="btn btn-primary">Create Task</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Delay Modal -->
+<div id="delay-modal" class="modal-backdrop" onclick="if(event.target === this) closeModal('delay-modal')">
+    <div class="modal">
+        <div class="modal-header">
+            <h3 class="modal-title">Delay Task</h3>
+            <button class="modal-close" onclick="closeModal('delay-modal')">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p style="color: var(--gray-500); margin-bottom: 16px;">Quick delay options:</p>
+            <div class="delay-buttons">
+                <button class="delay-btn" onclick="delayTask(currentTaskId, 1, 0)">+1 Hour</button>
+                <button class="delay-btn" onclick="delayTask(currentTaskId, 3, 0)">+3 Hours</button>
+                <button class="delay-btn" onclick="delayTask(currentTaskId, 0, 1)">+1 Day</button>
+                <button class="delay-btn" onclick="delayTask(currentTaskId, 0, 7)">+1 Week</button>
+            </div>
+
+            <hr style="margin: 20px 0; border: none; border-top: 1px solid var(--gray-200);">
+
+            <form method="POST" action="{{ url_for('delay_task_custom') }}" id="custom-delay-form">
+                <input type="hidden" name="task_id" id="delay-task-id">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                    <div class="form-group">
+                        <label class="form-label">New Date</label>
+                        <input type="date" name="new_date" class="form-input" value="{{ today }}">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">New Time</label>
+                        <input type="time" name="new_time" class="form-input" value="09:00">
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-primary" style="width: 100%;">Set Custom Date/Time</button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+    let currentTaskId = null;
+
+    function openDelayModal(taskId) {
+        currentTaskId = taskId;
+        document.getElementById('delay-task-id').value = taskId;
+        openModal('delay-modal');
+    }
+
+    function openEditModal(taskId) {
+        window.location.href = `/tasks/${taskId}/edit`;
+    }
+
+    // Tab filtering
+    document.querySelectorAll('.tab').forEach(tab => {
+        tab.addEventListener('click', function() {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            this.classList.add('active');
+            // Filter logic would go here
+        });
+    });
+</script>
+{% endblock %}
