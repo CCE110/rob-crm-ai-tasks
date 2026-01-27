@@ -753,13 +753,153 @@ def process_robcrm_inbox():
             pass
 
 
+def send_task_reminder_email(user, task):
+    """Send reminder email for a task that's due soon"""
+    import requests
+
+    WEB_SERVICE_URL = os.getenv('WEB_SERVICE_URL', 'https://www.jottask.app')
+    INTERNAL_API_KEY = os.getenv('INTERNAL_API_KEY', 'jottask-internal-2026')
+
+    user_email = user['email']
+    user_name = user.get('full_name', '')
+    task_title = task.get('title', 'Task')
+    task_id = task.get('id')
+    due_time = task.get('due_time', '')[:5] if task.get('due_time') else ''
+    client_name = task.get('client_name', '')
+    client_email = task.get('client_email', '')
+
+    greeting = f"Hi {user_name}," if user_name else "Hi,"
+
+    html_content = f"""
+    <html>
+    <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <div style="background: linear-gradient(135deg, #EF4444 0%, #F97316 100%); padding: 24px; border-radius: 12px 12px 0 0;">
+            <h1 style="color: white; margin: 0; font-size: 24px;">⏰ Task Reminder</h1>
+        </div>
+        <div style="background: #f9fafb; padding: 24px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 12px 12px;">
+            <p style="color: #374151;">{greeting}</p>
+            <p style="color: #374151;">Your task is due now:</p>
+            <div style="background: white; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; margin: 16px 0;">
+                <h3 style="margin: 0 0 8px 0; color: #111827;">{task_title}</h3>
+                <p style="margin: 0; color: #EF4444; font-size: 14px; font-weight: 600;">Due: {due_time} AEST</p>
+                {f'<p style="margin: 8px 0 0 0; color: #6b7280; font-size: 14px;">Client: {client_name}</p>' if client_name else ''}
+            </div>
+            <div style="margin-top: 16px;">
+                <a href="{WEB_SERVICE_URL}/tasks/{task_id}/complete" style="display: inline-block; background: #10B981; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; margin-right: 8px;">✅ Complete</a>
+                <a href="{WEB_SERVICE_URL}/tasks/{task_id}/edit" style="display: inline-block; background: #6366F1; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none;">📝 Edit</a>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+
+    try:
+        response = requests.post(
+            f"{WEB_SERVICE_URL}/api/internal/send-email",
+            json={
+                'to_email': user_email,
+                'subject': f"⏰ Reminder: {task_title}",
+                'body_html': html_content
+            },
+            headers={'X-Internal-Key': INTERNAL_API_KEY},
+            timeout=30
+        )
+        if response.status_code == 200 and response.json().get('success'):
+            print(f"    ✅ Reminder sent to {user_email}")
+            return True
+        else:
+            print(f"    ❌ Failed to send reminder: {response.text}")
+            return False
+    except Exception as e:
+        print(f"    ❌ Reminder email error: {e}")
+        return False
+
+
+def check_and_send_reminders():
+    """Check for tasks due soon and send reminders"""
+    print(f"\n🔔 Checking for tasks due soon...")
+
+    try:
+        # Get current time in AEST
+        aest = pytz.timezone('Australia/Brisbane')
+        now = datetime.now(aest)
+        today_str = now.date().isoformat()
+
+        # Get all pending tasks due today
+        result = supabase.table('tasks')\
+            .select('*, users!tasks_user_id_fkey(id, email, full_name, timezone)')\
+            .eq('status', 'pending')\
+            .eq('due_date', today_str)\
+            .execute()
+
+        tasks = result.data or []
+        tasks_with_time = [t for t in tasks if t.get('due_time')]
+
+        if not tasks_with_time:
+            print("    No tasks with due times today")
+            return
+
+        sent_count = 0
+
+        for task in tasks_with_time:
+            try:
+                # Parse due time
+                due_time_str = task['due_time']
+                parts = due_time_str.split(':')
+                hour, minute = int(parts[0]), int(parts[1])
+
+                task_due = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                time_diff = (task_due - now).total_seconds() / 60
+
+                # Send reminder if within 5-20 minute window
+                if -5 <= time_diff <= 20:
+                    # Check if reminder already sent today
+                    if task.get('reminder_sent_at'):
+                        try:
+                            sent_at = datetime.fromisoformat(task['reminder_sent_at'].replace('Z', '+00:00'))
+                            if sent_at.astimezone(aest).date() == now.date():
+                                continue  # Already sent today
+                        except:
+                            pass
+
+                    user = task.get('users')
+                    if not user:
+                        continue
+
+                    print(f"    📧 Sending reminder: {task['title'][:40]}...")
+
+                    if send_task_reminder_email(user, task):
+                        # Mark reminder as sent
+                        supabase.table('tasks').update({
+                            'reminder_sent_at': now.isoformat()
+                        }).eq('id', task['id']).execute()
+                        sent_count += 1
+
+                    time.sleep(0.5)  # Rate limit
+
+            except Exception as e:
+                print(f"    ⚠️ Error with task {task.get('id')}: {e}")
+                continue
+
+        if sent_count > 0:
+            print(f"    ✅ Sent {sent_count} reminder(s)")
+        else:
+            print("    No reminders needed right now")
+
+    except Exception as e:
+        print(f"❌ Reminder check error: {e}")
+
+
 def run_email_processor():
     """Main processor loop - runs continuously"""
     print("🚀 Starting Jottask Central Inbox Processor")
     print(f"📧 Monitoring: {JOTTASK_EMAIL}")
     if ROBCRM_PASSWORD:
         print(f"📧 Also monitoring: {ROBCRM_EMAIL}")
+    print("🔔 Task reminders enabled")
     print("=" * 50)
+
+    last_reminder_check = 0
 
     while True:
         try:
@@ -771,8 +911,14 @@ def run_email_processor():
             # Also process RobCRM inbox if configured
             process_robcrm_inbox()
 
-            print(f"\n😴 Sleeping for 5 minutes...")
-            time.sleep(300)  # 5 minutes (more frequent for better responsiveness)
+            # Check for reminders every minute
+            current_time = time.time()
+            if current_time - last_reminder_check >= 60:
+                check_and_send_reminders()
+                last_reminder_check = current_time
+
+            print(f"\n😴 Sleeping for 1 minute...")
+            time.sleep(60)  # Check every minute for better reminder timing
 
         except KeyboardInterrupt:
             print("\n👋 Shutting down email processor...")
