@@ -1880,6 +1880,11 @@ PROJECT_CREATE_TEMPLATE = """
 # ROUTES
 # ============================================
 
+@app.route('/version')
+def version():
+    """Debug endpoint to check deployment version"""
+    return "v2.5-action-fix"
+
 @app.route('/')
 def index():
     if 'user_id' in session:
