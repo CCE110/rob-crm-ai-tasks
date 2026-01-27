@@ -26,6 +26,54 @@ JOTTASK_EMAIL = os.getenv('JOTTASK_EMAIL', 'jottask@flowquote.ai')
 JOTTASK_PASSWORD = os.getenv('JOTTASK_EMAIL_PASSWORD')
 IMAP_SERVER = os.getenv('IMAP_SERVER', 'mail.privateemail.com')
 
+# Email sending via Resend
+RESEND_API_KEY = os.getenv('RESEND_API_KEY')
+FROM_EMAIL = os.getenv('FROM_EMAIL', 'jottask@flowquote.ai')
+
+
+def send_email_direct(to_email, subject, body_html):
+    """Send email directly via Resend API (no web service middleman)"""
+    import urllib.request
+    import urllib.error
+
+    if not RESEND_API_KEY:
+        print("  ❌ RESEND_API_KEY not configured")
+        return False
+
+    try:
+        data = json.dumps({
+            'from': f'Jottask <{FROM_EMAIL}>',
+            'to': [to_email],
+            'subject': subject,
+            'html': body_html
+        }).encode('utf-8')
+
+        req = urllib.request.Request(
+            'https://api.resend.com/emails',
+            data=data,
+            headers={
+                'Authorization': f'Bearer {RESEND_API_KEY}',
+                'Content-Type': 'application/json'
+            },
+            method='POST'
+        )
+
+        with urllib.request.urlopen(req, timeout=30) as response:
+            if response.getcode() in [200, 201]:
+                print(f"  ✅ Email sent to {to_email}")
+                return True
+            else:
+                print(f"  ❌ Resend returned status {response.getcode()}")
+                return False
+
+    except urllib.error.HTTPError as e:
+        error_msg = e.read().decode('utf-8', errors='ignore')
+        print(f"  ❌ Resend HTTP error ({e.code}): {error_msg}")
+        return False
+    except Exception as e:
+        print(f"  ❌ Failed to send email: {type(e).__name__}: {e}")
+        return False
+
 # Secondary inbox (robcrm.ai@gmail.com) - optional
 ROBCRM_EMAIL = os.getenv('ROBCRM_EMAIL', 'robcrm.ai@gmail.com')
 ROBCRM_PASSWORD = os.getenv('ROBCRM_EMAIL_PASSWORD')
@@ -439,11 +487,8 @@ def send_project_confirmation_email(user_email, project_name, items_added, user_
 
 
 def send_task_confirmation_email(user_email, task_title, due_date, due_time, task_id, user_name=None, user_id=None):
-    """Send confirmation email for task creation via web service API"""
-    import requests
-
+    """Send confirmation email for task creation - direct to Resend API"""
     WEB_SERVICE_URL = os.getenv('WEB_SERVICE_URL', 'https://www.jottask.app')
-    INTERNAL_API_KEY = os.getenv('INTERNAL_API_KEY', 'jottask-internal-2026')
 
     print(f"  📧 Sending task confirmation to {user_email}...")
 
@@ -485,25 +530,8 @@ def send_task_confirmation_email(user_email, task_title, due_date, due_time, tas
     </html>
     """
 
-    try:
-        response = requests.post(
-            f"{WEB_SERVICE_URL}/api/internal/send-email",
-            json={
-                'to_email': user_email,
-                'subject': f"✅ Task Created: {task_title}",
-                'body_html': html_content
-            },
-            headers={'X-Internal-Key': INTERNAL_API_KEY},
-            timeout=30
-        )
-
-        if response.status_code == 200 and response.json().get('success'):
-            print(f"  ✅ Task confirmation email sent to {user_email}")
-        else:
-            print(f"  ❌ Failed to send email: {response.text}")
-
-    except Exception as e:
-        print(f"  ❌ Failed to send task confirmation email: {e}")
+    # Send directly via Resend API (bypasses web service)
+    send_email_direct(user_email, f"✅ Task Created: {task_title}", html_content)
 
 
 def process_project_email(user_id, user_email, subject, body, user_name=None):
@@ -787,30 +815,22 @@ def get_action_token(task_id, user_id, action):
 
 
 def send_task_reminder_email(user, task):
-    """Send reminder email for a task that's due soon"""
-    import requests
-
+    """Send reminder email for a task that's due soon - direct to Resend API"""
     WEB_SERVICE_URL = os.getenv('WEB_SERVICE_URL', 'https://www.jottask.app')
-    INTERNAL_API_KEY = os.getenv('INTERNAL_API_KEY', 'jottask-internal-2026')
 
     user_email = user['email']
-    user_id = user['id']
     user_name = user.get('full_name', '')
     task_title = task.get('title', 'Task')
     task_id = task.get('id')
     due_time = task.get('due_time', '')[:5] if task.get('due_time') else ''
     client_name = task.get('client_name', '')
 
-    # Generate action tokens
-    complete_token = get_action_token(task_id, user_id, 'complete')
-    edit_token = get_action_token(task_id, user_id, 'edit')
-    delay_1h_token = get_action_token(task_id, user_id, 'delay_1hour')
-    delay_1d_token = get_action_token(task_id, user_id, 'delay_1day')
-
-    complete_url = f"{WEB_SERVICE_URL}/action/{complete_token}" if complete_token else f"{WEB_SERVICE_URL}/dashboard"
-    edit_url = f"{WEB_SERVICE_URL}/action/{edit_token}" if edit_token else f"{WEB_SERVICE_URL}/dashboard"
-    delay_1h_url = f"{WEB_SERVICE_URL}/action/{delay_1h_token}" if delay_1h_token else f"{WEB_SERVICE_URL}/dashboard"
-    delay_1d_url = f"{WEB_SERVICE_URL}/action/{delay_1d_token}" if delay_1d_token else f"{WEB_SERVICE_URL}/dashboard"
+    # Use query-param format for action URLs (no login required, no token generation needed)
+    action_base = f"{WEB_SERVICE_URL}/action"
+    complete_url = f"{action_base}?action=complete&task_id={task_id}"
+    reschedule_url = f"{action_base}?action=delay_custom&task_id={task_id}"
+    delay_1h_url = f"{action_base}?action=delay_1hour&task_id={task_id}"
+    delay_1d_url = f"{action_base}?action=delay_1day&task_id={task_id}"
 
     greeting = f"Hi {user_name}," if user_name else "Hi,"
 
@@ -828,37 +848,19 @@ def send_task_reminder_email(user, task):
                 <p style="margin: 0; color: #EF4444; font-size: 14px; font-weight: 600;">Due: {due_time} AEST</p>
                 {f'<p style="margin: 8px 0 0 0; color: #6b7280; font-size: 14px;">Client: {client_name}</p>' if client_name else ''}
             </div>
-            <div style="margin-top: 16px;">
-                <a href="{complete_url}" style="display: inline-block; background: #10B981; color: white; padding: 12px 20px; border-radius: 8px; text-decoration: none; margin: 4px;">✅ Complete</a>
-                <a href="{edit_url}" style="display: inline-block; background: #6366F1; color: white; padding: 12px 20px; border-radius: 8px; text-decoration: none; margin: 4px;">📝 Edit</a>
-                <a href="{delay_1h_url}" style="display: inline-block; background: #6B7280; color: white; padding: 12px 20px; border-radius: 8px; text-decoration: none; margin: 4px;">⏰ +1 Hour</a>
-                <a href="{delay_1d_url}" style="display: inline-block; background: #6B7280; color: white; padding: 12px 20px; border-radius: 8px; text-decoration: none; margin: 4px;">📅 +1 Day</a>
+            <div style="margin-top: 16px; text-align: center;">
+                <a href="{complete_url}" style="display: inline-block; background: #10B981; color: white; padding: 12px 20px; border-radius: 8px; text-decoration: none; margin: 4px; font-weight: 600;">✅ Complete</a>
+                <a href="{delay_1h_url}" style="display: inline-block; background: #6B7280; color: white; padding: 12px 20px; border-radius: 8px; text-decoration: none; margin: 4px; font-weight: 600;">⏰ +1 Hour</a>
+                <a href="{delay_1d_url}" style="display: inline-block; background: #6B7280; color: white; padding: 12px 20px; border-radius: 8px; text-decoration: none; margin: 4px; font-weight: 600;">📅 +1 Day</a>
+                <a href="{reschedule_url}" style="display: inline-block; background: #6366F1; color: white; padding: 12px 20px; border-radius: 8px; text-decoration: none; margin: 4px; font-weight: 600;">🗓️ Change Time</a>
             </div>
         </div>
     </body>
     </html>
     """
 
-    try:
-        response = requests.post(
-            f"{WEB_SERVICE_URL}/api/internal/send-email",
-            json={
-                'to_email': user_email,
-                'subject': f"⏰ Reminder: {task_title}",
-                'body_html': html_content
-            },
-            headers={'X-Internal-Key': INTERNAL_API_KEY},
-            timeout=30
-        )
-        if response.status_code == 200 and response.json().get('success'):
-            print(f"    ✅ Reminder sent to {user_email}")
-            return True
-        else:
-            print(f"    ❌ Failed to send reminder: {response.text}")
-            return False
-    except Exception as e:
-        print(f"    ❌ Reminder email error: {e}")
-        return False
+    # Send directly via Resend API (bypasses web service)
+    return send_email_direct(user_email, f"⏰ Reminder: {task_title}", html_content)
 
 
 def check_and_send_reminders():
