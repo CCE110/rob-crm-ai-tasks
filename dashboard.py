@@ -2495,7 +2495,13 @@ def handle_action():
             # Get task details
             task = supabase.table('tasks').select('*, users!tasks_user_id_fkey(id, email, full_name)').eq('id', task_id).single().execute()
             if not task.data:
-                return render_template_string(ERROR_PAGE, error="Task not found")
+                return render_template_string("""
+                <html><body style="font-family: sans-serif; text-align: center; padding: 50px;">
+                    <h2>Task Not Found</h2>
+                    <p>This task may have been completed or deleted.</p>
+                    <a href="https://www.jottask.app/dashboard">Go to Dashboard</a>
+                </body></html>
+                """)
 
             task_data = task.data
             task_title = task_data.get('title', 'Task')
@@ -2607,8 +2613,14 @@ def handle_action():
             </body></html>
             """, error=str(e))
 
-    # Default - go to dashboard
-    return redirect(url_for('dashboard'))
+    # Default - show error (don't redirect to login-required dashboard)
+    return render_template_string("""
+    <html><body style="font-family: sans-serif; text-align: center; padding: 50px;">
+        <h2>Invalid Action</h2>
+        <p>This link may be expired or invalid.</p>
+        <a href="https://www.jottask.app">Go to Jottask</a>
+    </body></html>
+    """)
 
 
 @app.route('/action/reschedule_submit', methods=['POST'])
