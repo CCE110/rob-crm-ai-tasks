@@ -2460,6 +2460,8 @@ def handle_action():
     project_id = request.args.get('project_id')
     task_id = request.args.get('task_id')
 
+    print(f"🎯 ACTION ROUTE HIT: action={action}, task_id={task_id}, project_id={project_id}")
+
     # Project actions
     if action == 'view_project' and project_id:
         try:
@@ -2492,8 +2494,10 @@ def handle_action():
     # Task actions - handle without login for email convenience
     if task_id and action:
         try:
+            print(f"  📋 Querying task {task_id}...")
             # Get task details
             task = supabase.table('tasks').select('*, users!tasks_user_id_fkey(id, email, full_name)').eq('id', task_id).single().execute()
+            print(f"  ✅ Task query result: {task.data is not None}")
             if not task.data:
                 return render_template_string("""
                 <html><body style="font-family: sans-serif; text-align: center; padding: 50px;">
