@@ -36,6 +36,10 @@ def send_admin_notification(subject, body_html):
     """Send notification email to admin using Resend"""
     import requests
 
+    if not RESEND_API_KEY:
+        print("❌ RESEND_API_KEY not configured for admin notification")
+        return False
+
     try:
         response = requests.post(
             'https://api.resend.com/emails',
@@ -49,7 +53,7 @@ def send_admin_notification(subject, body_html):
                 'subject': f'[Jottask Admin] {subject}',
                 'html': body_html
             },
-            timeout=10
+            timeout=30
         )
         if response.status_code in [200, 201]:
             print(f"✅ Admin notification sent: {subject}")
@@ -58,13 +62,19 @@ def send_admin_notification(subject, body_html):
             print(f"❌ Resend error ({response.status_code}): {response.text}")
             return False
     except Exception as e:
-        print(f"❌ Failed to send admin notification: {e}")
+        print(f"❌ Failed to send admin notification: {type(e).__name__}: {e}")
         return False
 
 
 def send_email(to_email, subject, body_html):
     """Send email using Resend API"""
     import requests
+
+    if not RESEND_API_KEY:
+        print("❌ RESEND_API_KEY not configured")
+        return False, "RESEND_API_KEY not configured"
+
+    print(f"📧 Sending to {to_email} via Resend (FROM_EMAIL={FROM_EMAIL})...")
 
     try:
         response = requests.post(
@@ -79,8 +89,9 @@ def send_email(to_email, subject, body_html):
                 'subject': subject,
                 'html': body_html
             },
-            timeout=10
+            timeout=30
         )
+        print(f"📧 Resend response: {response.status_code}")
         if response.status_code in [200, 201]:
             print(f"✅ Email sent to {to_email}: {subject}")
             return True, None
@@ -89,7 +100,7 @@ def send_email(to_email, subject, body_html):
             print(f"❌ Resend error ({response.status_code}): {error_msg}")
             return False, error_msg
     except Exception as e:
-        print(f"❌ Failed to send email: {e}")
+        print(f"❌ Failed to send email: {type(e).__name__}: {e}")
         return False, str(e)
 
 
