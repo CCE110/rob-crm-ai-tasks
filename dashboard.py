@@ -3028,6 +3028,25 @@ def get_chat_response(message):
 INTERNAL_API_KEY = os.getenv('INTERNAL_API_KEY', 'jottask-internal-2026')
 
 
+@app.route('/api/internal/generate-token', methods=['POST'])
+def internal_generate_token():
+    """Generate action token for email links"""
+    api_key = request.headers.get('X-Internal-Key')
+    if api_key != INTERNAL_API_KEY:
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    data = request.get_json()
+    task_id = data.get('task_id')
+    user_id = data.get('user_id')
+    action = data.get('action', 'edit')
+
+    if not task_id or not user_id:
+        return jsonify({'error': 'Missing task_id or user_id'}), 400
+
+    token = generate_action_token(task_id, user_id, action)
+    return jsonify({'token': token})
+
+
 @app.route('/api/internal/send-email', methods=['POST'])
 def internal_send_email():
     """Internal API for worker to send emails through web service"""
@@ -3049,6 +3068,153 @@ def internal_send_email():
         success, error = result
         return jsonify({'success': success, 'error': error})
     return jsonify({'success': result})
+
+
+# ============================================
+# EMAIL ACTION TOKENS (passwordless task actions)
+# ============================================
+
+import secrets
+
+def generate_action_token(task_id, user_id, action, hours_valid=72):
+    """Generate a secure token for email action links"""
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.now(pytz.UTC) + timedelta(hours=hours_valid)
+
+    supabase.table('email_action_tokens').insert({
+        'task_id': task_id,
+        'user_id': user_id,
+        'token': token,
+        'action': action,
+        'expires_at': expires_at.isoformat()
+    }).execute()
+
+    return token
+
+
+def validate_action_token(token):
+    """Validate token and return task_id, user_id if valid"""
+    result = supabase.table('email_action_tokens')\
+        .select('*')\
+        .eq('token', token)\
+        .is_('used_at', 'null')\
+        .execute()
+
+    if not result.data:
+        return None, None, None
+
+    token_data = result.data[0]
+    expires_at = datetime.fromisoformat(token_data['expires_at'].replace('Z', '+00:00'))
+
+    if datetime.now(pytz.UTC) > expires_at:
+        return None, None, None
+
+    return token_data['task_id'], token_data['user_id'], token_data['action']
+
+
+@app.route('/action/<token>')
+def email_action(token):
+    """Handle email action links without login"""
+    task_id, user_id, action = validate_action_token(token)
+
+    if not task_id:
+        return render_template_string("""
+        <html>
+        <body style="font-family: sans-serif; text-align: center; padding: 50px;">
+            <h2>Link Expired</h2>
+            <p>This action link has expired or already been used.</p>
+            <a href="https://www.jottask.app/login" style="color: #6366F1;">Login to Jottask</a>
+        </body>
+        </html>
+        """)
+
+    # Get task details
+    task = supabase.table('tasks').select('*').eq('id', task_id).single().execute()
+    if not task.data:
+        return redirect(url_for('login'))
+
+    task_data = task.data
+
+    if action == 'complete':
+        supabase.table('tasks').update({
+            'status': 'completed',
+            'completed_at': datetime.now(pytz.UTC).isoformat()
+        }).eq('id', task_id).execute()
+
+        # Mark token as used
+        supabase.table('email_action_tokens').update({
+            'used_at': datetime.now(pytz.UTC).isoformat()
+        }).eq('token', token).execute()
+
+        return render_template_string("""
+        <html>
+        <body style="font-family: sans-serif; text-align: center; padding: 50px;">
+            <h2 style="color: #10B981;">✅ Task Completed!</h2>
+            <p><strong>{{ title }}</strong></p>
+            <a href="https://www.jottask.app/dashboard" style="color: #6366F1;">Open Dashboard</a>
+        </body>
+        </html>
+        """, title=task_data.get('title', 'Task'))
+
+    elif action == 'edit':
+        # Auto-login user for edit and redirect to edit page
+        session['user_id'] = user_id
+        return redirect(url_for('edit_task', task_id=task_id))
+
+    elif action == 'delay_1hour':
+        # Delay task by 1 hour
+        current_time = task_data.get('due_time', '09:00:00')
+        try:
+            parts = current_time.split(':')
+            hour = int(parts[0]) + 1
+            if hour >= 24:
+                hour = 23
+            new_time = f"{hour:02d}:{parts[1]}:00"
+        except:
+            new_time = '10:00:00'
+
+        supabase.table('tasks').update({
+            'due_time': new_time,
+            'reminder_sent_at': None  # Allow new reminder
+        }).eq('id', task_id).execute()
+
+        return render_template_string("""
+        <html>
+        <body style="font-family: sans-serif; text-align: center; padding: 50px;">
+            <h2 style="color: #6366F1;">⏰ Task Delayed +1 Hour</h2>
+            <p><strong>{{ title }}</strong></p>
+            <p>New time: {{ new_time }}</p>
+            <a href="https://www.jottask.app/dashboard" style="color: #6366F1;">Open Dashboard</a>
+        </body>
+        </html>
+        """, title=task_data.get('title', 'Task'), new_time=new_time[:5])
+
+    elif action == 'delay_1day':
+        # Delay task by 1 day
+        current_date = task_data.get('due_date')
+        try:
+            due_date = datetime.fromisoformat(current_date)
+            new_date = (due_date + timedelta(days=1)).date().isoformat()
+        except:
+            new_date = (datetime.now() + timedelta(days=1)).date().isoformat()
+
+        supabase.table('tasks').update({
+            'due_date': new_date,
+            'reminder_sent_at': None  # Allow new reminder
+        }).eq('id', task_id).execute()
+
+        return render_template_string("""
+        <html>
+        <body style="font-family: sans-serif; text-align: center; padding: 50px;">
+            <h2 style="color: #6366F1;">📅 Task Delayed +1 Day</h2>
+            <p><strong>{{ title }}</strong></p>
+            <p>New date: {{ new_date }}</p>
+            <a href="https://www.jottask.app/dashboard" style="color: #6366F1;">Open Dashboard</a>
+        </body>
+        </html>
+        """, title=task_data.get('title', 'Task'), new_date=new_date)
+
+    return redirect(url_for('login'))
 
 
 @app.route('/api/chat/start', methods=['POST'])

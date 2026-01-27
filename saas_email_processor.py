@@ -438,7 +438,7 @@ def send_project_confirmation_email(user_email, project_name, items_added, user_
         print(f"  ⚠️ Failed to send confirmation email: {e}")
 
 
-def send_task_confirmation_email(user_email, task_title, due_date, due_time, task_id, user_name=None):
+def send_task_confirmation_email(user_email, task_title, due_date, due_time, task_id, user_name=None, user_id=None):
     """Send confirmation email for task creation via web service API"""
     import requests
 
@@ -447,6 +447,17 @@ def send_task_confirmation_email(user_email, task_title, due_date, due_time, tas
 
     print(f"  📧 Sending task confirmation to {user_email}...")
 
+    # Generate action tokens if user_id available
+    edit_url = f"{WEB_SERVICE_URL}/dashboard"
+    complete_url = f"{WEB_SERVICE_URL}/dashboard"
+    if user_id and task_id:
+        edit_token = get_action_token(task_id, user_id, 'edit')
+        complete_token = get_action_token(task_id, user_id, 'complete')
+        if edit_token:
+            edit_url = f"{WEB_SERVICE_URL}/action/{edit_token}"
+        if complete_token:
+            complete_url = f"{WEB_SERVICE_URL}/action/{complete_token}"
+
     greeting = f"Hi {user_name}," if user_name else "Hi,"
     due_display = f"{due_date} at {due_time[:5]}" if due_time else due_date
 
@@ -454,7 +465,7 @@ def send_task_confirmation_email(user_email, task_title, due_date, due_time, tas
     <html>
     <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
         <div style="background: linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%); padding: 24px; border-radius: 12px 12px 0 0;">
-            <h1 style="color: white; margin: 0; font-size: 24px;">Task Created</h1>
+            <h1 style="color: white; margin: 0; font-size: 24px;">✅ Task Created</h1>
         </div>
         <div style="background: #f9fafb; padding: 24px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 12px 12px;">
             <p style="color: #374151;">{greeting}</p>
@@ -463,8 +474,11 @@ def send_task_confirmation_email(user_email, task_title, due_date, due_time, tas
                 <h3 style="margin: 0 0 8px 0; color: #111827;">{task_title}</h3>
                 <p style="margin: 0; color: #6b7280; font-size: 14px;">Due: {due_display}</p>
             </div>
-            <a href="https://www.jottask.app/dashboard" style="display: inline-block; background: #6366F1; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; margin-top: 8px;">View Dashboard</a>
-            <a href="https://www.jottask.app/tasks/{task_id}/edit" style="display: inline-block; background: #10B981; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; margin-top: 8px; margin-left: 8px;">Edit Task</a>
+            <div style="margin-top: 16px;">
+                <a href="{edit_url}" style="display: inline-block; background: #6366F1; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; margin: 4px;">📝 Edit Task</a>
+                <a href="{complete_url}" style="display: inline-block; background: #10B981; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; margin: 4px;">✅ Complete</a>
+            </div>
+            <p style="color: #6b7280; font-size: 13px; margin-top: 16px;">You'll receive a reminder 5-20 minutes before this task is due.</p>
         </div>
         <p style="color: #9ca3af; font-size: 12px; text-align: center; margin-top: 24px;">
             Jottask - AI-Powered Task Management
@@ -474,12 +488,11 @@ def send_task_confirmation_email(user_email, task_title, due_date, due_time, tas
     """
 
     try:
-        # Send via web service API (bypasses Railway SMTP restrictions)
         response = requests.post(
             f"{WEB_SERVICE_URL}/api/internal/send-email",
             json={
                 'to_email': user_email,
-                'subject': f"Task Created: {task_title}",
+                'subject': f"✅ Task Created: {task_title}",
                 'body_html': html_content
             },
             headers={'X-Internal-Key': INTERNAL_API_KEY},
@@ -639,7 +652,8 @@ def process_central_inbox():
                             due_date=task.get('due_date', ''),
                             due_time=task.get('due_time', ''),
                             task_id=task.get('id'),
-                            user_name=user.get('full_name')
+                            user_name=user.get('full_name'),
+                            user_id=user_id
                         )
 
                         # Add email as note to task
@@ -753,6 +767,27 @@ def process_robcrm_inbox():
             pass
 
 
+def get_action_token(task_id, user_id, action):
+    """Get a token for email action links"""
+    import requests
+
+    WEB_SERVICE_URL = os.getenv('WEB_SERVICE_URL', 'https://www.jottask.app')
+    INTERNAL_API_KEY = os.getenv('INTERNAL_API_KEY', 'jottask-internal-2026')
+
+    try:
+        response = requests.post(
+            f"{WEB_SERVICE_URL}/api/internal/generate-token",
+            json={'task_id': task_id, 'user_id': user_id, 'action': action},
+            headers={'X-Internal-Key': INTERNAL_API_KEY},
+            timeout=10
+        )
+        if response.status_code == 200:
+            return response.json().get('token')
+    except:
+        pass
+    return None
+
+
 def send_task_reminder_email(user, task):
     """Send reminder email for a task that's due soon"""
     import requests
@@ -761,12 +796,23 @@ def send_task_reminder_email(user, task):
     INTERNAL_API_KEY = os.getenv('INTERNAL_API_KEY', 'jottask-internal-2026')
 
     user_email = user['email']
+    user_id = user['id']
     user_name = user.get('full_name', '')
     task_title = task.get('title', 'Task')
     task_id = task.get('id')
     due_time = task.get('due_time', '')[:5] if task.get('due_time') else ''
     client_name = task.get('client_name', '')
-    client_email = task.get('client_email', '')
+
+    # Generate action tokens
+    complete_token = get_action_token(task_id, user_id, 'complete')
+    edit_token = get_action_token(task_id, user_id, 'edit')
+    delay_1h_token = get_action_token(task_id, user_id, 'delay_1hour')
+    delay_1d_token = get_action_token(task_id, user_id, 'delay_1day')
+
+    complete_url = f"{WEB_SERVICE_URL}/action/{complete_token}" if complete_token else f"{WEB_SERVICE_URL}/dashboard"
+    edit_url = f"{WEB_SERVICE_URL}/action/{edit_token}" if edit_token else f"{WEB_SERVICE_URL}/dashboard"
+    delay_1h_url = f"{WEB_SERVICE_URL}/action/{delay_1h_token}" if delay_1h_token else f"{WEB_SERVICE_URL}/dashboard"
+    delay_1d_url = f"{WEB_SERVICE_URL}/action/{delay_1d_token}" if delay_1d_token else f"{WEB_SERVICE_URL}/dashboard"
 
     greeting = f"Hi {user_name}," if user_name else "Hi,"
 
@@ -785,8 +831,10 @@ def send_task_reminder_email(user, task):
                 {f'<p style="margin: 8px 0 0 0; color: #6b7280; font-size: 14px;">Client: {client_name}</p>' if client_name else ''}
             </div>
             <div style="margin-top: 16px;">
-                <a href="{WEB_SERVICE_URL}/tasks/{task_id}/complete" style="display: inline-block; background: #10B981; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; margin-right: 8px;">✅ Complete</a>
-                <a href="{WEB_SERVICE_URL}/tasks/{task_id}/edit" style="display: inline-block; background: #6366F1; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none;">📝 Edit</a>
+                <a href="{complete_url}" style="display: inline-block; background: #10B981; color: white; padding: 12px 20px; border-radius: 8px; text-decoration: none; margin: 4px;">✅ Complete</a>
+                <a href="{edit_url}" style="display: inline-block; background: #6366F1; color: white; padding: 12px 20px; border-radius: 8px; text-decoration: none; margin: 4px;">📝 Edit</a>
+                <a href="{delay_1h_url}" style="display: inline-block; background: #6B7280; color: white; padding: 12px 20px; border-radius: 8px; text-decoration: none; margin: 4px;">⏰ +1 Hour</a>
+                <a href="{delay_1d_url}" style="display: inline-block; background: #6B7280; color: white; padding: 12px 20px; border-radius: 8px; text-decoration: none; margin: 4px;">📅 +1 Day</a>
             </div>
         </div>
     </body>
