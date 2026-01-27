@@ -26,16 +26,35 @@ JOTTASK_EMAIL = os.getenv('JOTTASK_EMAIL', 'jottask@flowquote.ai')
 JOTTASK_PASSWORD = os.getenv('JOTTASK_EMAIL_PASSWORD')
 IMAP_SERVER = os.getenv('IMAP_SERVER', 'mail.privateemail.com')
 
+# Secondary inbox (robcrm.ai@gmail.com) - optional
+ROBCRM_EMAIL = os.getenv('ROBCRM_EMAIL', 'robcrm.ai@gmail.com')
+ROBCRM_PASSWORD = os.getenv('ROBCRM_EMAIL_PASSWORD')
+ROBCRM_IMAP_SERVER = 'imap.gmail.com'
+
 
 def get_user_by_email(sender_email):
-    """Find a user by their email address"""
+    """Find a user by their primary email or alternate emails"""
+    sender_lower = sender_email.lower()
+
+    # First try primary email
     result = supabase.table('users')\
-        .select('id, email, timezone, subscription_tier, subscription_status')\
-        .eq('email', sender_email.lower())\
+        .select('id, email, full_name, timezone, subscription_tier, subscription_status')\
+        .eq('email', sender_lower)\
         .execute()
 
     if result.data and len(result.data) > 0:
         return result.data[0]
+
+    # Then check alternate_emails array
+    result = supabase.table('users')\
+        .select('id, email, full_name, timezone, subscription_tier, subscription_status')\
+        .contains('alternate_emails', [sender_lower])\
+        .execute()
+
+    if result.data and len(result.data) > 0:
+        print(f"    ✓ Matched alternate email for user: {result.data[0]['email']}")
+        return result.data[0]
+
     return None
 
 
@@ -48,6 +67,20 @@ def connect_to_jottask_inbox():
         return imap
     except Exception as e:
         print(f"❌ Failed to connect to Jottask inbox: {e}")
+        return None
+
+
+def connect_to_robcrm_inbox():
+    """Connect to the secondary RobCRM Gmail inbox"""
+    if not ROBCRM_PASSWORD:
+        return None
+    try:
+        imap = imaplib.IMAP4_SSL(ROBCRM_IMAP_SERVER, 993)
+        imap.login(ROBCRM_EMAIL, ROBCRM_PASSWORD)
+        print(f"✅ Connected to {ROBCRM_EMAIL}")
+        return imap
+    except Exception as e:
+        print(f"⚠️ Could not connect to RobCRM inbox: {e}")
         return None
 
 
@@ -391,6 +424,63 @@ def send_project_confirmation_email(user_email, project_name, items_added, user_
         print(f"  ⚠️ Failed to send confirmation email: {e}")
 
 
+def send_task_confirmation_email(user_email, task_title, due_date, due_time, task_id, user_name=None):
+    """Send confirmation email for task creation via web service API"""
+    import requests
+
+    WEB_SERVICE_URL = os.getenv('WEB_SERVICE_URL', 'https://www.jottask.app')
+    INTERNAL_API_KEY = os.getenv('INTERNAL_API_KEY', 'jottask-internal-2026')
+
+    print(f"  📧 Sending task confirmation to {user_email}...")
+
+    greeting = f"Hi {user_name}," if user_name else "Hi,"
+    due_display = f"{due_date} at {due_time[:5]}" if due_time else due_date
+
+    html_content = f"""
+    <html>
+    <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <div style="background: linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%); padding: 24px; border-radius: 12px 12px 0 0;">
+            <h1 style="color: white; margin: 0; font-size: 24px;">Task Created</h1>
+        </div>
+        <div style="background: #f9fafb; padding: 24px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 12px 12px;">
+            <p style="color: #374151;">{greeting}</p>
+            <p style="color: #374151;">Your task has been created:</p>
+            <div style="background: white; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; margin: 16px 0;">
+                <h3 style="margin: 0 0 8px 0; color: #111827;">{task_title}</h3>
+                <p style="margin: 0; color: #6b7280; font-size: 14px;">Due: {due_display}</p>
+            </div>
+            <a href="https://www.jottask.app/dashboard" style="display: inline-block; background: #6366F1; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; margin-top: 8px;">View Dashboard</a>
+            <a href="https://www.jottask.app/tasks/{task_id}/edit" style="display: inline-block; background: #10B981; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; margin-top: 8px; margin-left: 8px;">Edit Task</a>
+        </div>
+        <p style="color: #9ca3af; font-size: 12px; text-align: center; margin-top: 24px;">
+            Jottask - AI-Powered Task Management
+        </p>
+    </body>
+    </html>
+    """
+
+    try:
+        # Send via web service API (bypasses Railway SMTP restrictions)
+        response = requests.post(
+            f"{WEB_SERVICE_URL}/api/internal/send-email",
+            json={
+                'to_email': user_email,
+                'subject': f"Task Created: {task_title}",
+                'body_html': html_content
+            },
+            headers={'X-Internal-Key': INTERNAL_API_KEY},
+            timeout=30
+        )
+
+        if response.status_code == 200 and response.json().get('success'):
+            print(f"  ✅ Task confirmation email sent to {user_email}")
+        else:
+            print(f"  ❌ Failed to send email: {response.text}")
+
+    except Exception as e:
+        print(f"  ❌ Failed to send task confirmation email: {e}")
+
+
 def process_project_email(user_id, user_email, subject, body, user_name=None):
     """Process a project email - extract project and items, add to database"""
     print(f"  📁 Processing project email...")
@@ -528,6 +618,16 @@ def process_central_inbox():
                     if task:
                         print(f"    ✅ Task created for {user['email']}: {task.get('title', 'N/A')}")
 
+                        # Send confirmation email
+                        send_task_confirmation_email(
+                            user_email=user['email'],
+                            task_title=task.get('title', 'New Task'),
+                            due_date=task.get('due_date', ''),
+                            due_time=task.get('due_time', ''),
+                            task_id=task.get('id'),
+                            user_name=user.get('full_name')
+                        )
+
                         # Add email as note to task
                         try:
                             supabase.table('task_notes').insert({
@@ -559,10 +659,92 @@ def process_central_inbox():
             pass
 
 
+def process_robcrm_inbox():
+    """Process emails from the secondary RobCRM Gmail inbox"""
+    if not ROBCRM_PASSWORD:
+        return  # Skip if not configured
+
+    print(f"\n📧 Processing secondary inbox: {ROBCRM_EMAIL}")
+
+    imap = connect_to_robcrm_inbox()
+    if not imap:
+        return
+
+    try:
+        imap.select('INBOX')
+        _, messages = imap.search(None, 'UNSEEN')
+
+        if not messages[0]:
+            print("📭 No new emails in RobCRM inbox")
+            imap.logout()
+            return
+
+        email_ids = messages[0].split()
+        print(f"📬 Found {len(email_ids)} new emails in RobCRM inbox")
+
+        for email_id in email_ids:
+            try:
+                _, msg_data = imap.fetch(email_id, '(RFC822)')
+                email_message = email.message_from_bytes(msg_data[0][1])
+
+                from_header = email_message.get('From', '')
+                subject = decode_email_subject(email_message.get('Subject', ''))
+
+                # Extract sender email
+                if '<' in from_header:
+                    from_email = from_header.split('<')[1].split('>')[0].lower()
+                else:
+                    from_email = from_header.lower()
+
+                # Skip system emails
+                if from_email in [ROBCRM_EMAIL.lower(), JOTTASK_EMAIL.lower()]:
+                    continue
+
+                print(f"\n📨 Processing from RobCRM: {subject[:50]}...")
+
+                # Get email body
+                body = ""
+                if email_message.is_multipart():
+                    for part in email_message.walk():
+                        if part.get_content_type() == "text/plain":
+                            body = part.get_payload(decode=True).decode('utf-8', errors='ignore')
+                            break
+                else:
+                    body = email_message.get_payload(decode=True).decode('utf-8', errors='ignore')
+
+                # Find user by email
+                user = get_user_by_email(from_email)
+                if not user:
+                    print(f"⚠️ Unknown sender: {from_email} - skipping")
+                    continue
+
+                # Check if project email
+                if is_project_email(subject):
+                    process_project_email(user, subject, body, from_email)
+                else:
+                    process_task_email(user, subject, body, from_email)
+
+            except Exception as e:
+                print(f"❌ Error processing email: {e}")
+                continue
+
+        imap.logout()
+        print("✅ RobCRM inbox processing complete")
+
+    except Exception as e:
+        print(f"❌ Error processing RobCRM inbox: {e}")
+        try:
+            imap.logout()
+        except:
+            pass
+
+
 def run_email_processor():
     """Main processor loop - runs continuously"""
     print("🚀 Starting Jottask Central Inbox Processor")
     print(f"📧 Monitoring: {JOTTASK_EMAIL}")
+    if ROBCRM_PASSWORD:
+        print(f"📧 Also monitoring: {ROBCRM_EMAIL}")
     print("=" * 50)
 
     while True:
@@ -571,6 +753,9 @@ def run_email_processor():
 
             # Process the central Jottask inbox
             process_central_inbox()
+
+            # Also process RobCRM inbox if configured
+            process_robcrm_inbox()
 
             print(f"\n😴 Sleeping for 5 minutes...")
             time.sleep(300)  # 5 minutes (more frequent for better responsiveness)

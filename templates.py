@@ -8,7 +8,7 @@ Separated for cleaner code organization
 # ============================================
 
 TASK_EDIT_TEMPLATE = """
-{% extends "base" %}
+{% extends "base.html" %}
 {% block content %}
 <nav class="nav">
     <a href="{{ url_for('dashboard') }}" class="nav-brand">
@@ -157,7 +157,7 @@ async function delayTask(taskId, hours, days) {
 # ============================================
 
 TASK_DETAIL_TEMPLATE = """
-{% extends "base" %}
+{% extends "base.html" %}
 {% block content %}
 <nav class="nav">
     <a href="{{ url_for('dashboard') }}" class="nav-brand">
@@ -931,7 +931,7 @@ LANDING_TEMPLATE = """
 # ============================================
 
 PRICING_TEMPLATE = """
-{% extends "base" %}
+{% extends "base.html" %}
 {% block content %}
 <nav class="nav">
     <a href="/" class="nav-brand">

@@ -26,6 +26,68 @@ SUPABASE_URL = os.getenv('SUPABASE_URL')
 SUPABASE_KEY = os.getenv('SUPABASE_KEY')
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+# Admin notification settings
+ADMIN_EMAIL = os.getenv('ADMIN_EMAIL', 'admin@flowquote.ai')
+SMTP_SERVER = os.getenv('SMTP_SERVER', 'mail.privateemail.com')
+SMTP_PORT = 587  # Use submission port with STARTTLS
+SMTP_USER = os.getenv('JOTTASK_EMAIL', 'jottask@flowquote.ai')
+SMTP_PASSWORD = os.getenv('JOTTASK_EMAIL_PASSWORD')
+
+
+def send_admin_notification(subject, body_html):
+    """Send notification email to admin"""
+    import smtplib
+    from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart
+
+    try:
+        msg = MIMEMultipart('alternative')
+        msg['Subject'] = f"[Jottask Admin] {subject}"
+        msg['From'] = SMTP_USER
+        msg['To'] = ADMIN_EMAIL
+
+        html_part = MIMEText(body_html, 'html')
+        msg.attach(html_part)
+
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=10) as server:
+            server.starttls()
+            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.sendmail(SMTP_USER, ADMIN_EMAIL, msg.as_string())
+
+        print(f"✅ Admin notification sent: {subject}")
+        return True
+    except Exception as e:
+        print(f"❌ Failed to send admin notification: {e}")
+        return False
+
+
+def send_email(to_email, subject, body_html):
+    """Send email to any address"""
+    import smtplib
+    from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart
+
+    try:
+        msg = MIMEMultipart('alternative')
+        msg['Subject'] = subject
+        msg['From'] = f"Jottask <{SMTP_USER}>"
+        msg['To'] = to_email
+
+        html_part = MIMEText(body_html, 'html')
+        msg.attach(html_part)
+
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=10) as server:
+            server.starttls()
+            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.sendmail(SMTP_USER, to_email, msg.as_string())
+
+        print(f"✅ Email sent to {to_email}: {subject}")
+        return True
+    except Exception as e:
+        print(f"❌ Failed to send email: {e}")
+        return False
+
+
 # ============================================
 # AUTH HELPERS
 # ============================================
@@ -52,6 +114,10 @@ BASE_TEMPLATE = """
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ title }} - Jottask</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+    <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+    <link rel="manifest" href="/static/manifest.json">
+    <meta name="theme-color" content="#6366F1">
     <style>
         :root {
             --primary: #6366F1;
@@ -643,6 +709,9 @@ LOGIN_TEMPLATE = """
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Login - Jottask</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+    <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+    <meta name="theme-color" content="#6366F1">
     <style>
         :root {
             --primary: #6366F1;
@@ -759,6 +828,9 @@ SIGNUP_TEMPLATE = """
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sign Up - Jottask</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+    <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+    <meta name="theme-color" content="#6366F1">
     <style>
         :root {
             --primary: #6366F1;
@@ -896,7 +968,7 @@ SIGNUP_TEMPLATE = """
 # ============================================
 
 DASHBOARD_TEMPLATE = """
-{% extends "base" %}
+{% extends "base.html" %}
 {% block content %}
 <nav class="nav">
     <a href="{{ url_for('dashboard') }}" class="nav-brand">
@@ -1121,7 +1193,7 @@ DASHBOARD_TEMPLATE = """
 # ============================================
 
 SETTINGS_TEMPLATE = """
-{% extends "base" %}
+{% extends "base.html" %}
 {% block content %}
 <nav class="nav">
     <a href="{{ url_for('dashboard') }}" class="nav-brand">
@@ -1278,7 +1350,7 @@ SETTINGS_TEMPLATE = """
 # ============================================
 
 PROJECTS_TEMPLATE = """
-{% extends "base" %}
+{% extends "base.html" %}
 {% block content %}
 <nav class="nav">
     <a href="{{ url_for('dashboard') }}" class="nav-brand">
@@ -1477,7 +1549,7 @@ PROJECTS_TEMPLATE = """
 """
 
 PROJECT_DETAIL_TEMPLATE = """
-{% extends "base" %}
+{% extends "base.html" %}
 {% block content %}
 <nav class="nav">
     <a href="{{ url_for('dashboard') }}" class="nav-brand">
@@ -1658,7 +1730,7 @@ PROJECT_DETAIL_TEMPLATE = """
 """
 
 PROJECT_CREATE_TEMPLATE = """
-{% extends "base" %}
+{% extends "base.html" %}
 {% block content %}
 <nav class="nav">
     <a href="{{ url_for('dashboard') }}" class="nav-brand">
@@ -1884,6 +1956,20 @@ def signup():
                 session['user_name'] = full_name
                 session['timezone'] = timezone
 
+                # Notify admin of new signup
+                send_admin_notification(
+                    f"New Signup: {full_name}",
+                    f"""
+                    <h2>New User Signup</h2>
+                    <p><strong>Name:</strong> {full_name}</p>
+                    <p><strong>Email:</strong> {email}</p>
+                    <p><strong>Timezone:</strong> {timezone}</p>
+                    <p><strong>Time:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M')}</p>
+                    <hr>
+                    <p><a href="https://www.jottask.app/admin">View Admin Dashboard</a></p>
+                    """
+                )
+
                 return redirect(url_for('dashboard'))
 
         except Exception as e:
@@ -1905,6 +1991,101 @@ def logout():
     return redirect(url_for('login'))
 
 
+@app.route('/debug-tasks')
+@login_required
+def debug_tasks():
+    """Temporary debug endpoint to check task user_id mapping (requires login)"""
+    user_id = session['user_id']
+    user_email = session.get('user_email')
+
+    # Get tasks for this user
+    user_tasks = supabase.table('tasks').select('id, title, status, user_id').eq('user_id', user_id).limit(10).execute()
+
+    # Get all pending tasks to see their user_ids
+    all_pending = supabase.table('tasks').select('id, title, user_id').eq('status', 'pending').limit(10).execute()
+
+    # Count pending tasks by user_id
+    pending_count = supabase.table('tasks').select('user_id', count='exact').eq('status', 'pending').execute()
+
+    debug_info = f"""
+    <h2>Debug Task Info</h2>
+    <p><strong>Session user_id:</strong> {user_id}</p>
+    <p><strong>Session email:</strong> {user_email}</p>
+    <p><strong>Expected user_id:</strong> e515407e-dbd6-4331-a815-1878815c89bc</p>
+    <p><strong>Match:</strong> {'YES' if str(user_id) == 'e515407e-dbd6-4331-a815-1878815c89bc' else 'NO - MISMATCH!'}</p>
+    <hr>
+    <h3>Tasks for your user_id ({len(user_tasks.data) if user_tasks.data else 0} found):</h3>
+    <ul>
+    {''.join(f"<li>{t.get('title', 'N/A')[:50]} - status: {t.get('status')}</li>" for t in (user_tasks.data or []))}
+    </ul>
+    <hr>
+    <h3>Sample pending tasks (any user_id):</h3>
+    <ul>
+    {''.join(f"<li>{t.get('title', 'N/A')[:50]} - user_id: {t.get('user_id')}</li>" for t in (all_pending.data or []))}
+    </ul>
+    <hr>
+    <p>Total pending tasks count: {pending_count.count if pending_count else 'N/A'}</p>
+    <a href="/dashboard">Back to Dashboard</a>
+    """
+    return debug_info
+
+
+@app.route('/debug-db')
+def debug_db():
+    """Public debug endpoint to check database state (REMOVE IN PRODUCTION)"""
+    expected_user_id = 'e515407e-dbd6-4331-a815-1878815c89bc'
+
+    # Get status distribution
+    all_statuses = supabase.table('tasks').select('status').limit(500).execute()
+    status_counts = {}
+    for t in (all_statuses.data or []):
+        s = repr(t.get('status'))  # Use repr to see exact value including None/quotes
+        status_counts[s] = status_counts.get(s, 0) + 1
+
+    # Get pending tasks for expected user
+    pending_for_user = supabase.table('tasks').select('id, title, status').eq('user_id', expected_user_id).eq('status', 'pending').limit(10).execute()
+
+    # Get any pending tasks
+    any_pending = supabase.table('tasks').select('id, title, status, user_id').eq('status', 'pending').limit(10).execute()
+
+    # Get sample of all tasks to see actual status values
+    sample_tasks = supabase.table('tasks').select('title, status, user_id').limit(20).execute()
+
+    # Get users
+    users = supabase.table('users').select('id, email').execute()
+
+    debug_info = f"""
+    <html><body style="font-family: monospace; padding: 20px;">
+    <h2>Database Debug (Public - Remove Later)</h2>
+    <h3>Status Distribution (first 500 tasks):</h3>
+    <pre>{status_counts}</pre>
+
+    <h3>Pending tasks for expected user ({len(pending_for_user.data) if pending_for_user.data else 0}):</h3>
+    <ul>
+    {''.join(f"<li>{t.get('title', 'N/A')[:50]} - status: {repr(t.get('status'))}</li>" for t in (pending_for_user.data or [])) or '<li>None found</li>'}
+    </ul>
+
+    <h3>Any pending tasks in DB ({len(any_pending.data) if any_pending.data else 0}):</h3>
+    <ul>
+    {''.join(f"<li>{t.get('title', 'N/A')[:40]} | status={repr(t.get('status'))} | user={t.get('user_id')[:8]}...</li>" for t in (any_pending.data or [])) or '<li>None found</li>'}
+    </ul>
+
+    <h3>Sample of 20 tasks (any status):</h3>
+    <table border="1" cellpadding="5">
+    <tr><th>Title</th><th>Status (repr)</th><th>User ID</th></tr>
+    {''.join(f"<tr><td>{t.get('title', 'N/A')[:35]}</td><td>{repr(t.get('status'))}</td><td>{str(t.get('user_id'))[:12]}...</td></tr>" for t in (sample_tasks.data or []))}
+    </table>
+
+    <h3>Users:</h3>
+    <ul>
+    {''.join(f"<li>{u.get('email')} - {u.get('id')}</li>" for u in (users.data or []))}
+    </ul>
+    <p><strong>Expected user_id:</strong> {expected_user_id}</p>
+    </body></html>
+    """
+    return debug_info
+
+
 @app.route('/dashboard')
 @login_required
 def dashboard():
@@ -1912,25 +2093,35 @@ def dashboard():
     tz = get_user_timezone()
     today = datetime.now(tz).date().isoformat()
 
-    # Get tasks
-    tasks = supabase.table('tasks')\
+    # Get pending tasks first (most important)
+    pending_tasks_result = supabase.table('tasks')\
         .select('*')\
         .eq('user_id', user_id)\
+        .eq('status', 'pending')\
         .order('due_date')\
         .order('due_time')\
-        .limit(100)\
         .execute()
 
-    # Calculate stats
-    all_tasks = tasks.data or []
-    pending_tasks = [t for t in all_tasks if t['status'] == 'pending']
-    completed_tasks = [t for t in all_tasks if t['status'] == 'completed']
+    # Get recent completed tasks (last 50)
+    completed_tasks_result = supabase.table('tasks')\
+        .select('*')\
+        .eq('user_id', user_id)\
+        .eq('status', 'completed')\
+        .order('completed_at', desc=True)\
+        .limit(50)\
+        .execute()
 
+    # Combine: pending first, then recent completed
+    pending_list = pending_tasks_result.data or []
+    completed_list = completed_tasks_result.data or []
+    all_tasks = pending_list + completed_list
+
+    # Calculate stats
     stats = {
-        'pending': len(pending_tasks),
-        'due_today': len([t for t in pending_tasks if t.get('due_date') == today]),
-        'overdue': len([t for t in pending_tasks if t.get('due_date') and t['due_date'] < today]),
-        'completed_this_week': len([t for t in completed_tasks if t.get('completed_at')])  # Simplified
+        'pending': len(pending_list),
+        'due_today': len([t for t in pending_list if t.get('due_date') == today]),
+        'overdue': len([t for t in pending_list if t.get('due_date') and t['due_date'] < today]),
+        'completed_this_week': len([t for t in completed_list if t.get('completed_at')])  # Shows recent completed
     }
 
     return render_template(
@@ -2231,6 +2422,54 @@ def update_summary_settings():
 def billing():
     # Placeholder for Stripe billing portal
     return redirect(url_for('settings'))
+
+
+# ============================================
+# ACTION ROUTE (Email Button Handler)
+# ============================================
+
+@app.route('/action')
+def handle_action():
+    """Handle action button clicks from emails - redirects to appropriate pages"""
+    action = request.args.get('action')
+    project_id = request.args.get('project_id')
+    task_id = request.args.get('task_id')
+
+    # Project actions
+    if action == 'view_project' and project_id:
+        try:
+            # Check if project exists in saas_projects
+            project = supabase.table('saas_projects').select('id').eq('id', project_id).execute()
+            print(f"Project query result: {project.data}")
+            if project.data and len(project.data) > 0:
+                return redirect(url_for('project_detail', project_id=project_id))
+        except Exception as e:
+            print(f"Project query error: {e}")
+
+        # Project not found - show error page
+        projects_url = url_for('projects')
+        return f'''
+        <!DOCTYPE html>
+        <html>
+        <head><title>Project Not Found - Jottask</title>
+        <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+        </head>
+        <body style="font-family: -apple-system, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background: #f9fafb;">
+            <div style="text-align: center; padding: 40px; background: white; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.1);">
+                <h2 style="color: #6366F1;">Project Not Found</h2>
+                <p style="color: #6b7280;">This project may have been deleted or moved.</p>
+                <a href="{projects_url}" style="display: inline-block; margin-top: 20px; padding: 10px 20px; background: #6366F1; color: white; text-decoration: none; border-radius: 8px;">Go to Projects</a>
+            </div>
+        </body>
+        </html>
+        '''
+
+    # Task actions - redirect to dashboard for now
+    if task_id:
+        return redirect(url_for('dashboard'))
+
+    # Default - go to dashboard
+    return redirect(url_for('dashboard'))
 
 
 # ============================================
@@ -2580,6 +2819,574 @@ def api_delay_task(task_id):
     }).eq('id', task_id).execute()
 
     return jsonify({'success': True, 'new_due': new_dt.isoformat()})
+
+
+# ============================================
+# SUPPORT CHAT
+# ============================================
+
+CHAT_WIDGET_TEMPLATE = """
+<div id="chat-widget" class="chat-widget">
+    <button id="chat-toggle" class="chat-toggle" onclick="toggleChat()">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+        </svg>
+        <span class="chat-badge" id="chat-badge" style="display: none;">1</span>
+    </button>
+    <div id="chat-panel" class="chat-panel" style="display: none;">
+        <div class="chat-header">
+            <span>Jottask Support</span>
+            <button onclick="toggleChat()" style="background: none; border: none; color: white; cursor: pointer;">&times;</button>
+        </div>
+        <div id="chat-messages" class="chat-messages">
+            <div class="chat-message bot">
+                <p>Hi! I'm here to help. Ask me anything about Jottask, or type <strong>"speak to human"</strong> to escalate to our team.</p>
+            </div>
+        </div>
+        <form id="chat-form" class="chat-input-form" onsubmit="sendMessage(event)">
+            <input type="text" id="chat-input" placeholder="Type a message..." autocomplete="off">
+            <button type="submit">Send</button>
+        </form>
+    </div>
+</div>
+
+<style>
+.chat-widget { position: fixed; bottom: 20px; right: 20px; z-index: 1000; }
+.chat-toggle { width: 56px; height: 56px; border-radius: 50%; background: var(--primary, #6366F1); border: none; color: white; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.15); display: flex; align-items: center; justify-content: center; position: relative; }
+.chat-toggle:hover { transform: scale(1.05); }
+.chat-badge { position: absolute; top: -4px; right: -4px; background: #EF4444; color: white; font-size: 12px; padding: 2px 6px; border-radius: 10px; }
+.chat-panel { position: absolute; bottom: 70px; right: 0; width: 350px; height: 450px; background: white; border-radius: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.15); display: flex; flex-direction: column; overflow: hidden; }
+.chat-header { background: var(--primary, #6366F1); color: white; padding: 16px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
+.chat-messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.chat-message { max-width: 85%; padding: 10px 14px; border-radius: 12px; font-size: 14px; line-height: 1.4; }
+.chat-message.user { background: var(--primary, #6366F1); color: white; align-self: flex-end; border-bottom-right-radius: 4px; }
+.chat-message.bot, .chat-message.admin { background: #F3F4F6; color: #374151; align-self: flex-start; border-bottom-left-radius: 4px; }
+.chat-message.admin { background: #FEF3C7; border-left: 3px solid #F59E0B; }
+.chat-input-form { display: flex; padding: 12px; border-top: 1px solid #E5E7EB; gap: 8px; }
+.chat-input-form input { flex: 1; padding: 10px 14px; border: 1px solid #E5E7EB; border-radius: 20px; outline: none; }
+.chat-input-form input:focus { border-color: var(--primary, #6366F1); }
+.chat-input-form button { padding: 10px 16px; background: var(--primary, #6366F1); color: white; border: none; border-radius: 20px; cursor: pointer; }
+@media (max-width: 480px) { .chat-panel { width: calc(100vw - 40px); right: -10px; } }
+</style>
+
+<script>
+let conversationId = null;
+
+function toggleChat() {
+    const panel = document.getElementById('chat-panel');
+    panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
+    if (panel.style.display === 'flex' && !conversationId) {
+        startConversation();
+    }
+}
+
+async function startConversation() {
+    try {
+        const res = await fetch('/api/chat/start', { method: 'POST' });
+        const data = await res.json();
+        conversationId = data.conversation_id;
+    } catch (e) {
+        console.error('Failed to start chat:', e);
+    }
+}
+
+async function sendMessage(e) {
+    e.preventDefault();
+    const input = document.getElementById('chat-input');
+    const message = input.value.trim();
+    if (!message) return;
+
+    // Add user message to UI
+    addMessage(message, 'user');
+    input.value = '';
+
+    try {
+        const res = await fetch('/api/chat/message', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ conversation_id: conversationId, message: message })
+        });
+        const data = await res.json();
+
+        if (data.response) {
+            addMessage(data.response, data.sender_type || 'bot');
+        }
+        if (data.escalated) {
+            addMessage("Your message has been escalated to our team. We'll respond via email shortly.", 'bot');
+        }
+    } catch (e) {
+        addMessage("Sorry, something went wrong. Please try again.", 'bot');
+    }
+}
+
+function addMessage(text, type) {
+    const container = document.getElementById('chat-messages');
+    const msg = document.createElement('div');
+    msg.className = 'chat-message ' + type;
+    msg.innerHTML = '<p>' + text + '</p>';
+    container.appendChild(msg);
+    container.scrollTop = container.scrollHeight;
+}
+</script>
+"""
+
+# Smart chat - topic definitions with responses
+CHAT_TOPICS = {
+    'task': {
+        'actions': ['create', 'make', 'add', 'new', 'set', 'how', 'start', 'begin', 'setup', 'set up'],
+        'response': 'To create a task:\n\n1. Click "+ New Task" on the dashboard\n2. Email your task to jottask@flowquote.ai\n3. CC jottask@flowquote.ai on any email to auto-create a follow-up\n\nTry clicking the blue "+ New Task" button!'
+    },
+    'project': {
+        'actions': ['create', 'make', 'add', 'new', 'set', 'how', 'start', 'begin', 'setup', 'set up'],
+        'response': 'To create a project:\n\n1. Go to Projects tab → click "+ New Project"\n2. Or email with subject: "Project: Name - Item 1, Item 2"\n\nExample: "Project: Website Redesign - Add contact form, Fix nav"\n\nEach item becomes a checklist item!'
+    },
+    'delay': {
+        'actions': ['how', 'can i', 'to', 'a task', 'postpone', 'reschedule', 'snooze', 'push', 'move'],
+        'response': 'To delay/postpone a task:\n\n1. Hover over the task → click "Delay"\n2. Choose quick option (+1 hour, +1 day, +1 week)\n3. Or set a custom date/time\n\nThe task will reappear when it\'s due!'
+    },
+    'complete': {
+        'actions': ['how', 'mark', 'finish', 'done', 'check', 'tick'],
+        'response': 'To complete a task:\n\nJust click the circle checkbox next to the task! ✓\n\nIt will be marked done and move to the Completed tab. You can reopen it later if needed.'
+    },
+    'delete': {
+        'actions': ['how', 'remove', 'trash', 'get rid'],
+        'response': 'To delete a task:\n\n1. Click "Edit" on the task\n2. Scroll down → click "Delete"\n\n⚠️ Deleted tasks cannot be recovered!'
+    },
+    'email': {
+        'actions': ['what', 'which', 'send', 'use', 'how', 'address', 'integration'],
+        'response': 'Email your tasks to:\njottask@flowquote.ai\n\n• Regular email → Creates a task\n• Subject "Project: Name - items" → Creates a project\n• CC jottask on any email → Creates follow-up reminder'
+    }
+}
+
+# Direct keyword matches (no topic needed)
+DIRECT_RESPONSES = {
+    'help': 'Welcome to Jottask! I can help with:\n\n• Creating tasks and projects\n• Email integration (jottask@flowquote.ai)\n• Delaying, completing, or editing tasks\n• Settings and billing\n\nJust ask naturally - like "how do I make a task?" or "what\'s the email address?"',
+    'pricing': 'Jottask Pricing:\n\n• 14-day free trial (no card needed)\n• Starter - Core task management\n• Pro - Advanced automation\n\nGo to Settings → Subscription to manage your plan.',
+    'settings': 'Click "Settings" in the top navigation to:\n\n• Update your profile & timezone\n• Configure daily summary emails\n• Manage subscription & billing',
+    'thanks': 'You\'re welcome! Let me know if you need anything else. 😊',
+    'thank you': 'You\'re welcome! Happy to help. Let me know if you have more questions!',
+}
+
+GREETINGS = ['hi', 'hello', 'hey', 'hola', 'good morning', 'good afternoon', 'good evening', 'howdy']
+
+
+def get_chat_response(message):
+    """Smart matching - understands natural language questions"""
+    msg = message.lower().strip()
+    words = msg.split()
+
+    # Check greetings first
+    if any(g in msg for g in GREETINGS):
+        return 'Hello! 👋 I\'m here to help you with Jottask.\n\nAsk me anything like:\n• "How do I create a task?"\n• "What\'s the email address?"\n• "How to delay a task?"\n\nOr type "speak to human" for live support.'
+
+    # Check direct keyword matches
+    for keyword, response in DIRECT_RESPONSES.items():
+        if keyword in msg:
+            return response
+
+    # Smart topic + action matching
+    for topic, data in CHAT_TOPICS.items():
+        if topic in msg:
+            # Topic found - check if any action word is present
+            if any(action in msg for action in data['actions']):
+                return data['response']
+            # Topic alone (e.g., just "task?" or "projects")
+            if len(words) <= 3:
+                return data['response']
+
+    # Check for question patterns without explicit topic
+    if any(w in msg for w in ['how do i', 'how to', 'how can i', 'what is', 'where']):
+        # Try to infer topic from remaining words
+        if any(w in msg for w in ['task', 'todo', 'reminder', 'to-do']):
+            return CHAT_TOPICS['task']['response']
+        if any(w in msg for w in ['project', 'checklist', 'list']):
+            return CHAT_TOPICS['project']['response']
+
+    return None
+
+
+# ============================================
+# INTERNAL EMAIL API (for worker service)
+# ============================================
+
+INTERNAL_API_KEY = os.getenv('INTERNAL_API_KEY', 'jottask-internal-2026')
+
+
+@app.route('/api/internal/send-email', methods=['POST'])
+def internal_send_email():
+    """Internal API for worker to send emails through web service"""
+    # Verify internal API key
+    api_key = request.headers.get('X-Internal-Key')
+    if api_key != INTERNAL_API_KEY:
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    data = request.get_json()
+    to_email = data.get('to_email')
+    subject = data.get('subject')
+    body_html = data.get('body_html')
+
+    if not all([to_email, subject, body_html]):
+        return jsonify({'error': 'Missing required fields'}), 400
+
+    success = send_email(to_email, subject, body_html)
+    return jsonify({'success': success})
+
+
+@app.route('/api/chat/start', methods=['POST'])
+@login_required
+def chat_start():
+    """Start a new support conversation"""
+    user_id = session['user_id']
+
+    # Create conversation
+    conv = supabase.table('support_conversations').insert({
+        'user_id': user_id,
+        'status': 'open'
+    }).execute()
+
+    return jsonify({'conversation_id': conv.data[0]['id']})
+
+
+@app.route('/api/chat/message', methods=['POST'])
+@login_required
+def chat_message():
+    """Handle chat message from user"""
+    user_id = session['user_id']
+    data = request.get_json()
+    conversation_id = data.get('conversation_id')
+    message = data.get('message', '').strip()
+
+    if not conversation_id or not message:
+        return jsonify({'error': 'Missing data'}), 400
+
+    # Save user message
+    supabase.table('support_messages').insert({
+        'conversation_id': conversation_id,
+        'sender_type': 'user',
+        'message': message
+    }).execute()
+
+    # Check for escalation keywords
+    escalate_keywords = ['speak to human', 'talk to human', 'real person', 'escalate', 'support team', 'help me']
+    should_escalate = any(kw in message.lower() for kw in escalate_keywords)
+
+    if should_escalate:
+        # Escalate conversation
+        supabase.table('support_conversations').update({
+            'status': 'escalated',
+            'escalated_at': datetime.now(pytz.UTC).isoformat()
+        }).eq('id', conversation_id).execute()
+
+        # Get user info and conversation history
+        user = supabase.table('users').select('email, full_name').eq('id', user_id).single().execute()
+        messages = supabase.table('support_messages').select('*').eq('conversation_id', conversation_id).order('created_at').execute()
+
+        # Build conversation history for email
+        history = ""
+        for msg in messages.data:
+            sender = msg['sender_type'].upper()
+            history += f"<p><strong>{sender}:</strong> {msg['message']}</p>"
+
+        # Send admin notification
+        send_admin_notification(
+            f"Chat Escalation: {user.data['full_name'] or user.data['email']}",
+            f"""
+            <h2>Support Chat Escalated</h2>
+            <p><strong>User:</strong> {user.data['full_name']} ({user.data['email']})</p>
+            <p><strong>Time:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M')}</p>
+            <hr>
+            <h3>Conversation History:</h3>
+            {history}
+            <hr>
+            <p><a href="https://www.jottask.app/admin/chats/{conversation_id}">View in Admin</a></p>
+            """
+        )
+
+        return jsonify({
+            'escalated': True,
+            'response': "I've notified our support team. They'll respond to you via email shortly."
+        })
+
+    # Try to find a matching response using smart matching
+    response = get_chat_response(message)
+
+    # Default response if no match
+    if not response:
+        response = "I'm not sure about that specific question. Try asking about:\n\n• Creating tasks or projects\n• Using email integration\n• Delaying or completing tasks\n• Settings and pricing\n\nOr type 'speak to human' to reach our support team directly."
+
+    # Save bot response
+    supabase.table('support_messages').insert({
+        'conversation_id': conversation_id,
+        'sender_type': 'bot',
+        'message': response
+    }).execute()
+
+    return jsonify({'response': response, 'sender_type': 'bot'})
+
+
+# ============================================
+# ADMIN DASHBOARD
+# ============================================
+
+def admin_required(f):
+    """Decorator to require admin access"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user_id' not in session:
+            return redirect(url_for('login'))
+        # Check if user is admin (your user ID)
+        admin_id = 'e515407e-dbd6-4331-a815-1878815c89bc'
+        if session['user_id'] != admin_id:
+            return "Access denied", 403
+        return f(*args, **kwargs)
+    return decorated_function
+
+
+@app.route('/admin')
+@admin_required
+def admin_dashboard():
+    """Admin dashboard showing signups, activity, and escalated chats"""
+
+    # Get recent signups
+    users = supabase.table('users')\
+        .select('*')\
+        .order('created_at', desc=True)\
+        .limit(20)\
+        .execute()
+
+    # Get escalated chats
+    escalated = supabase.table('support_conversations')\
+        .select('*, users(email, full_name)')\
+        .eq('status', 'escalated')\
+        .order('escalated_at', desc=True)\
+        .limit(10)\
+        .execute()
+
+    # Get stats
+    total_users = supabase.table('users').select('id', count='exact').execute()
+    total_tasks = supabase.table('tasks').select('id', count='exact').execute()
+    total_projects = supabase.table('saas_projects').select('id', count='exact').execute()
+
+    stats = {
+        'total_users': total_users.count or 0,
+        'total_tasks': total_tasks.count or 0,
+        'total_projects': total_projects.count or 0
+    }
+
+    admin_html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Jottask Admin</title>
+        <style>
+            * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+            body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #F3F4F6; }}
+            .nav {{ background: white; padding: 16px 24px; border-bottom: 1px solid #E5E7EB; display: flex; justify-content: space-between; align-items: center; }}
+            .nav-brand {{ font-weight: 700; font-size: 20px; color: #6366F1; text-decoration: none; }}
+            .main {{ max-width: 1200px; margin: 0 auto; padding: 24px; }}
+            .stats-grid {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px; }}
+            .stat-card {{ background: white; padding: 24px; border-radius: 12px; text-align: center; }}
+            .stat-value {{ font-size: 36px; font-weight: 700; color: #6366F1; }}
+            .stat-label {{ color: #6B7280; margin-top: 4px; }}
+            .card {{ background: white; border-radius: 12px; margin-bottom: 24px; overflow: hidden; }}
+            .card-header {{ padding: 16px 20px; border-bottom: 1px solid #E5E7EB; font-weight: 600; }}
+            table {{ width: 100%; border-collapse: collapse; }}
+            th, td {{ padding: 12px 16px; text-align: left; border-bottom: 1px solid #F3F4F6; }}
+            th {{ background: #F9FAFB; font-weight: 600; color: #374151; }}
+            .badge {{ padding: 4px 8px; border-radius: 4px; font-size: 12px; }}
+            .badge-trial {{ background: #FEF3C7; color: #92400E; }}
+            .badge-active {{ background: #D1FAE5; color: #065F46; }}
+            .badge-escalated {{ background: #FEE2E2; color: #991B1B; }}
+            a {{ color: #6366F1; }}
+        </style>
+    </head>
+    <body>
+        <nav class="nav">
+            <a href="/admin" class="nav-brand">Jottask Admin</a>
+            <a href="/dashboard">Back to App</a>
+        </nav>
+        <main class="main">
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-value">{stats['total_users']}</div>
+                    <div class="stat-label">Total Users</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">{stats['total_tasks']}</div>
+                    <div class="stat-label">Total Tasks</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">{stats['total_projects']}</div>
+                    <div class="stat-label">Total Projects</div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">Escalated Support Chats</div>
+                <table>
+                    <tr><th>User</th><th>Email</th><th>Escalated</th><th>Action</th></tr>
+                    {''.join(f"<tr><td>{c.get('users', {}).get('full_name', 'N/A')}</td><td>{c.get('users', {}).get('email', 'N/A')}</td><td>{c.get('escalated_at', '')[:16] if c.get('escalated_at') else 'N/A'}</td><td><a href='/admin/chats/{c['id']}'>View</a></td></tr>" for c in (escalated.data or [])) or '<tr><td colspan="4" style="text-align: center; color: #9CA3AF;">No escalated chats</td></tr>'}
+                </table>
+            </div>
+
+            <div class="card">
+                <div class="card-header">Recent Signups</div>
+                <table>
+                    <tr><th>Name</th><th>Email</th><th>Status</th><th>Joined</th></tr>
+                    {''.join(f"<tr><td>{u.get('full_name', 'N/A')}</td><td>{u.get('email')}</td><td><span class='badge badge-{u.get('subscription_status', 'trial')}'>{u.get('subscription_status', 'trial')}</span></td><td>{u.get('created_at', '')[:10] if u.get('created_at') else 'N/A'}</td></tr>" for u in (users.data or []))}
+                </table>
+            </div>
+        </main>
+    </body>
+    </html>
+    """
+    return admin_html
+
+
+@app.route('/admin/chats/<conversation_id>')
+@admin_required
+def admin_chat_view(conversation_id):
+    """View a support conversation"""
+
+    # Get conversation with user info
+    conv = supabase.table('support_conversations')\
+        .select('*, users(email, full_name)')\
+        .eq('id', conversation_id)\
+        .single()\
+        .execute()
+
+    if not conv.data:
+        return "Not found", 404
+
+    # Get messages
+    messages = supabase.table('support_messages')\
+        .select('*')\
+        .eq('conversation_id', conversation_id)\
+        .order('created_at')\
+        .execute()
+
+    user_info = conv.data.get('users', {})
+
+    messages_html = ""
+    for msg in (messages.data or []):
+        sender_class = msg['sender_type']
+        messages_html += f"<div class='message {sender_class}'><strong>{msg['sender_type'].upper()}</strong><p>{msg['message']}</p><small>{msg['created_at'][:16]}</small></div>"
+
+    admin_html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Chat - Jottask Admin</title>
+        <style>
+            * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+            body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #F3F4F6; }}
+            .nav {{ background: white; padding: 16px 24px; border-bottom: 1px solid #E5E7EB; display: flex; justify-content: space-between; }}
+            .nav-brand {{ font-weight: 700; font-size: 20px; color: #6366F1; text-decoration: none; }}
+            .main {{ max-width: 800px; margin: 0 auto; padding: 24px; }}
+            .card {{ background: white; border-radius: 12px; padding: 24px; margin-bottom: 24px; }}
+            .message {{ padding: 12px; margin-bottom: 12px; border-radius: 8px; }}
+            .message.user {{ background: #EEF2FF; }}
+            .message.bot {{ background: #F3F4F6; }}
+            .message.admin {{ background: #FEF3C7; }}
+            .message small {{ color: #9CA3AF; }}
+            .reply-form {{ display: flex; gap: 8px; }}
+            .reply-form input {{ flex: 1; padding: 12px; border: 1px solid #E5E7EB; border-radius: 8px; }}
+            .reply-form button {{ padding: 12px 24px; background: #6366F1; color: white; border: none; border-radius: 8px; cursor: pointer; }}
+        </style>
+    </head>
+    <body>
+        <nav class="nav">
+            <a href="/admin" class="nav-brand">← Back to Admin</a>
+        </nav>
+        <main class="main">
+            <div class="card">
+                <h2>Chat with {user_info.get('full_name', 'User')}</h2>
+                <p style="color: #6B7280;">Email: {user_info.get('email', 'N/A')} | Status: {conv.data.get('status', 'open')}</p>
+            </div>
+
+            <div class="card">
+                <h3 style="margin-bottom: 16px;">Messages</h3>
+                {messages_html}
+            </div>
+
+            <div class="card">
+                <form method="POST" action="/admin/chats/{conversation_id}/reply" class="reply-form">
+                    <input type="text" name="message" placeholder="Type your reply..." required>
+                    <button type="submit">Send Reply</button>
+                </form>
+            </div>
+        </main>
+    </body>
+    </html>
+    """
+    return admin_html
+
+
+@app.route('/admin/chats/<conversation_id>/reply', methods=['POST'])
+@admin_required
+def admin_chat_reply(conversation_id):
+    """Send admin reply to a chat"""
+    message = request.form.get('message', '').strip()
+
+    if not message:
+        return redirect(url_for('admin_chat_view', conversation_id=conversation_id))
+
+    # Save admin message
+    supabase.table('support_messages').insert({
+        'conversation_id': conversation_id,
+        'sender_type': 'admin',
+        'message': message
+    }).execute()
+
+    # Get user email to send notification
+    conv = supabase.table('support_conversations')\
+        .select('users(email, full_name)')\
+        .eq('id', conversation_id)\
+        .single()\
+        .execute()
+
+    if conv.data and conv.data.get('users'):
+        user_email = conv.data['users']['email']
+        user_name = conv.data['users'].get('full_name', 'there')
+
+        # Send email to user about admin reply
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+
+        try:
+            msg = MIMEMultipart('alternative')
+            msg['Subject'] = "Reply from Jottask Support"
+            msg['From'] = SMTP_USER
+            msg['To'] = user_email
+
+            html = f"""
+            <h2>Hi {user_name},</h2>
+            <p>We've replied to your support request:</p>
+            <blockquote style="background: #F3F4F6; padding: 16px; border-radius: 8px; margin: 16px 0;">
+                {message}
+            </blockquote>
+            <p>You can continue the conversation in the chat widget on your <a href="https://www.jottask.app/dashboard">Jottask dashboard</a>.</p>
+            <p>Best,<br>Jottask Support</p>
+            """
+
+            msg.attach(MIMEText(html, 'html'))
+
+            with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=10) as server:
+                server.starttls()
+                server.login(SMTP_USER, SMTP_PASSWORD)
+                server.sendmail(SMTP_USER, user_email, msg.as_string())
+
+        except Exception as e:
+            print(f"Failed to send reply notification: {e}")
+
+    # Mark as resolved if this is a reply
+    supabase.table('support_conversations').update({
+        'status': 'resolved',
+        'resolved_at': datetime.now(pytz.UTC).isoformat()
+    }).eq('id', conversation_id).execute()
+
+    return redirect(url_for('admin_chat_view', conversation_id=conversation_id))
 
 
 # ============================================
