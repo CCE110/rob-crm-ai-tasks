@@ -447,16 +447,12 @@ def send_task_confirmation_email(user_email, task_title, due_date, due_time, tas
 
     print(f"  📧 Sending task confirmation to {user_email}...")
 
-    # Generate action tokens if user_id available
-    edit_url = f"{WEB_SERVICE_URL}/dashboard"
-    complete_url = f"{WEB_SERVICE_URL}/dashboard"
-    if user_id and task_id:
-        edit_token = get_action_token(task_id, user_id, 'edit')
-        complete_token = get_action_token(task_id, user_id, 'complete')
-        if edit_token:
-            edit_url = f"{WEB_SERVICE_URL}/action/{edit_token}"
-        if complete_token:
-            complete_url = f"{WEB_SERVICE_URL}/action/{complete_token}"
+    # Use query-param format for action URLs (no login required)
+    action_base = f"{WEB_SERVICE_URL}/action"
+    complete_url = f"{action_base}?action=complete&task_id={task_id}"
+    delay_1hour_url = f"{action_base}?action=delay_1hour&task_id={task_id}"
+    delay_1day_url = f"{action_base}?action=delay_1day&task_id={task_id}"
+    reschedule_url = f"{action_base}?action=delay_custom&task_id={task_id}"
 
     greeting = f"Hi {user_name}," if user_name else "Hi,"
     due_display = f"{due_date} at {due_time[:5]}" if due_time else due_date
@@ -474,9 +470,11 @@ def send_task_confirmation_email(user_email, task_title, due_date, due_time, tas
                 <h3 style="margin: 0 0 8px 0; color: #111827;">{task_title}</h3>
                 <p style="margin: 0; color: #6b7280; font-size: 14px;">Due: {due_display}</p>
             </div>
-            <div style="margin-top: 16px;">
-                <a href="{edit_url}" style="display: inline-block; background: #6366F1; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; margin: 4px;">📝 Edit Task</a>
-                <a href="{complete_url}" style="display: inline-block; background: #10B981; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; margin: 4px;">✅ Complete</a>
+            <div style="margin-top: 16px; text-align: center;">
+                <a href="{complete_url}" style="display: inline-block; background: #10B981; color: white; padding: 12px 20px; border-radius: 8px; text-decoration: none; margin: 4px; font-weight: 600;">✅ Complete</a>
+                <a href="{delay_1hour_url}" style="display: inline-block; background: #6b7280; color: white; padding: 12px 20px; border-radius: 8px; text-decoration: none; margin: 4px; font-weight: 600;">⏰ +1 Hour</a>
+                <a href="{delay_1day_url}" style="display: inline-block; background: #6b7280; color: white; padding: 12px 20px; border-radius: 8px; text-decoration: none; margin: 4px; font-weight: 600;">📅 +1 Day</a>
+                <a href="{reschedule_url}" style="display: inline-block; background: #6366F1; color: white; padding: 12px 20px; border-radius: 8px; text-decoration: none; margin: 4px; font-weight: 600;">🗓️ Change Time</a>
             </div>
             <p style="color: #6b7280; font-size: 13px; margin-top: 16px;">You'll receive a reminder 5-20 minutes before this task is due.</p>
         </div>
