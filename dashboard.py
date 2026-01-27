@@ -28,61 +28,65 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Admin notification settings
 ADMIN_EMAIL = os.getenv('ADMIN_EMAIL', 'admin@flowquote.ai')
-SMTP_SERVER = os.getenv('SMTP_SERVER', 'mail.privateemail.com')
-SMTP_PORT = 587  # Use submission port with STARTTLS
-SMTP_USER = os.getenv('JOTTASK_EMAIL', 'jottask@flowquote.ai')
-SMTP_PASSWORD = os.getenv('JOTTASK_EMAIL_PASSWORD')
+RESEND_API_KEY = os.getenv('RESEND_API_KEY')
+FROM_EMAIL = os.getenv('FROM_EMAIL', 'jottask@flowquote.ai')
 
 
 def send_admin_notification(subject, body_html):
-    """Send notification email to admin"""
-    import smtplib
-    from email.mime.text import MIMEText
-    from email.mime.multipart import MIMEMultipart
+    """Send notification email to admin using Resend"""
+    import requests
 
     try:
-        msg = MIMEMultipart('alternative')
-        msg['Subject'] = f"[Jottask Admin] {subject}"
-        msg['From'] = SMTP_USER
-        msg['To'] = ADMIN_EMAIL
-
-        html_part = MIMEText(body_html, 'html')
-        msg.attach(html_part)
-
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=10) as server:
-            server.starttls()
-            server.login(SMTP_USER, SMTP_PASSWORD)
-            server.sendmail(SMTP_USER, ADMIN_EMAIL, msg.as_string())
-
-        print(f"✅ Admin notification sent: {subject}")
-        return True
+        response = requests.post(
+            'https://api.resend.com/emails',
+            headers={
+                'Authorization': f'Bearer {RESEND_API_KEY}',
+                'Content-Type': 'application/json'
+            },
+            json={
+                'from': f'Jottask <{FROM_EMAIL}>',
+                'to': [ADMIN_EMAIL],
+                'subject': f'[Jottask Admin] {subject}',
+                'html': body_html
+            },
+            timeout=10
+        )
+        if response.status_code == 200:
+            print(f"✅ Admin notification sent: {subject}")
+            return True
+        else:
+            print(f"❌ Resend error: {response.text}")
+            return False
     except Exception as e:
         print(f"❌ Failed to send admin notification: {e}")
         return False
 
 
 def send_email(to_email, subject, body_html):
-    """Send email to any address"""
-    import smtplib
-    from email.mime.text import MIMEText
-    from email.mime.multipart import MIMEMultipart
+    """Send email using Resend API"""
+    import requests
 
     try:
-        msg = MIMEMultipart('alternative')
-        msg['Subject'] = subject
-        msg['From'] = f"Jottask <{SMTP_USER}>"
-        msg['To'] = to_email
-
-        html_part = MIMEText(body_html, 'html')
-        msg.attach(html_part)
-
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=10) as server:
-            server.starttls()
-            server.login(SMTP_USER, SMTP_PASSWORD)
-            server.sendmail(SMTP_USER, to_email, msg.as_string())
-
-        print(f"✅ Email sent to {to_email}: {subject}")
-        return True
+        response = requests.post(
+            'https://api.resend.com/emails',
+            headers={
+                'Authorization': f'Bearer {RESEND_API_KEY}',
+                'Content-Type': 'application/json'
+            },
+            json={
+                'from': f'Jottask <{FROM_EMAIL}>',
+                'to': [to_email],
+                'subject': subject,
+                'html': body_html
+            },
+            timeout=10
+        )
+        if response.status_code == 200:
+            print(f"✅ Email sent to {to_email}: {subject}")
+            return True
+        else:
+            print(f"❌ Resend error: {response.text}")
+            return False
     except Exception as e:
         print(f"❌ Failed to send email: {e}")
         return False
@@ -3350,35 +3354,16 @@ def admin_chat_reply(conversation_id):
         user_name = conv.data['users'].get('full_name', 'there')
 
         # Send email to user about admin reply
-        import smtplib
-        from email.mime.text import MIMEText
-        from email.mime.multipart import MIMEMultipart
-
-        try:
-            msg = MIMEMultipart('alternative')
-            msg['Subject'] = "Reply from Jottask Support"
-            msg['From'] = SMTP_USER
-            msg['To'] = user_email
-
-            html = f"""
-            <h2>Hi {user_name},</h2>
-            <p>We've replied to your support request:</p>
-            <blockquote style="background: #F3F4F6; padding: 16px; border-radius: 8px; margin: 16px 0;">
-                {message}
-            </blockquote>
-            <p>You can continue the conversation in the chat widget on your <a href="https://www.jottask.app/dashboard">Jottask dashboard</a>.</p>
-            <p>Best,<br>Jottask Support</p>
-            """
-
-            msg.attach(MIMEText(html, 'html'))
-
-            with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=10) as server:
-                server.starttls()
-                server.login(SMTP_USER, SMTP_PASSWORD)
-                server.sendmail(SMTP_USER, user_email, msg.as_string())
-
-        except Exception as e:
-            print(f"Failed to send reply notification: {e}")
+        html = f"""
+        <h2>Hi {user_name},</h2>
+        <p>We've replied to your support request:</p>
+        <blockquote style="background: #F3F4F6; padding: 16px; border-radius: 8px; margin: 16px 0;">
+            {message}
+        </blockquote>
+        <p>You can continue the conversation in the chat widget on your <a href="https://www.jottask.app/dashboard">Jottask dashboard</a>.</p>
+        <p>Best,<br>Jottask Support</p>
+        """
+        send_email(user_email, "Reply from Jottask Support", html)
 
     # Mark as resolved if this is a reply
     supabase.table('support_conversations').update({
