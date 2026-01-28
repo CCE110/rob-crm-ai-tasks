@@ -2242,6 +2242,7 @@ def dashboard():
     user_id = session['user_id']
     tz = get_user_timezone()
     today = datetime.now(tz).date().isoformat()
+    search_query = request.args.get('q', '').strip()
 
     # Get pending tasks first (most important)
     pending_tasks_result = supabase.table('tasks')\
@@ -2266,12 +2267,27 @@ def dashboard():
     completed_list = completed_tasks_result.data or []
     all_tasks = pending_list + completed_list
 
-    # Calculate stats
+    # Filter by search query if provided
+    if search_query:
+        search_lower = search_query.lower()
+        all_tasks = [t for t in all_tasks if
+            search_lower in (t.get('title') or '').lower() or
+            search_lower in (t.get('description') or '').lower() or
+            search_lower in (t.get('client_name') or '').lower()
+        ]
+        pending_list = [t for t in pending_list if
+            search_lower in (t.get('title') or '').lower() or
+            search_lower in (t.get('description') or '').lower() or
+            search_lower in (t.get('client_name') or '').lower()
+        ]
+
+    # Calculate stats (from unfiltered data)
+    all_pending = pending_tasks_result.data or []
     stats = {
-        'pending': len(pending_list),
-        'due_today': len([t for t in pending_list if t.get('due_date') == today]),
-        'overdue': len([t for t in pending_list if t.get('due_date') and t['due_date'] < today]),
-        'completed_this_week': len([t for t in completed_list if t.get('completed_at')])  # Shows recent completed
+        'pending': len(all_pending),
+        'due_today': len([t for t in all_pending if t.get('due_date') == today]),
+        'overdue': len([t for t in all_pending if t.get('due_date') and t['due_date'] < today]),
+        'completed_this_week': len([t for t in (completed_tasks_result.data or []) if t.get('completed_at')])
     }
 
     return render_template(
@@ -2279,7 +2295,8 @@ def dashboard():
         title='Dashboard',
         tasks=all_tasks,
         stats=stats,
-        today=today
+        today=today,
+        search_query=search_query
     )
 
 

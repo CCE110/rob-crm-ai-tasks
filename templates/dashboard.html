@@ -51,6 +51,34 @@
         </div>
     </div>
 
+    <!-- Search Bar -->
+    <div class="card" style="margin-bottom: 20px; padding: 16px;">
+        <form method="GET" action="{{ url_for('dashboard') }}" style="display: flex; gap: 12px; align-items: center;">
+            <div style="position: relative; flex: 1;">
+                <input type="text"
+                       name="q"
+                       id="search-input"
+                       class="form-input"
+                       placeholder="Search tasks by title, description, or client..."
+                       value="{{ search_query or '' }}"
+                       style="padding-left: 40px;">
+                <svg style="position: absolute; left: 12px; top: 50%; transform: translateY(-50%); width: 20px; height: 20px; color: var(--gray-400);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                </svg>
+            </div>
+            <button type="submit" class="btn btn-primary">Search</button>
+            {% if search_query %}
+            <a href="{{ url_for('dashboard') }}" class="btn btn-secondary">Clear</a>
+            {% endif %}
+        </form>
+    </div>
+
+    {% if search_query %}
+    <div style="margin-bottom: 16px; color: var(--gray-600);">
+        Found <strong>{{ tasks|length }}</strong> task{{ 's' if tasks|length != 1 else '' }} matching "<strong>{{ search_query }}</strong>"
+    </div>
+    {% endif %}
+
     <!-- Task Card -->
     <div class="card">
         <div class="card-header">
@@ -213,35 +241,86 @@
             this.classList.add('active');
 
             const filter = this.dataset.filter;
-            const tasks = document.querySelectorAll('.task-item');
-
-            tasks.forEach(task => {
-                const status = task.dataset.status;
-                const isToday = task.dataset.isToday === 'true';
-                const isOverdue = task.dataset.isOverdue === 'true';
-
-                let show = false;
-
-                switch(filter) {
-                    case 'all':
-                        show = true;
-                        break;
-                    case 'today':
-                        show = isToday && status === 'pending';
-                        break;
-                    case 'overdue':
-                        show = isOverdue;
-                        break;
-                    case 'completed':
-                        show = status === 'completed';
-                        break;
-                    default:
-                        show = true;
-                }
-
-                task.style.display = show ? 'flex' : 'none';
-            });
+            filterTasks(filter, document.getElementById('search-input').value);
         });
+    });
+
+    // Instant search filtering
+    const searchInput = document.getElementById('search-input');
+    let searchTimeout;
+
+    searchInput.addEventListener('input', function() {
+        clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(() => {
+            const activeTab = document.querySelector('.tab.active');
+            const filter = activeTab ? activeTab.dataset.filter : 'all';
+            filterTasks(filter, this.value);
+        }, 150);
+    });
+
+    // Handle Enter key for search
+    searchInput.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            const query = this.value.trim();
+            if (query) {
+                window.location.href = `{{ url_for('dashboard') }}?q=${encodeURIComponent(query)}`;
+            } else {
+                window.location.href = '{{ url_for('dashboard') }}';
+            }
+        }
+    });
+
+    function filterTasks(filter, searchQuery) {
+        const tasks = document.querySelectorAll('.task-item');
+        const searchLower = (searchQuery || '').toLowerCase();
+
+        tasks.forEach(task => {
+            const status = task.dataset.status;
+            const isToday = task.dataset.isToday === 'true';
+            const isOverdue = task.dataset.isOverdue === 'true';
+            const title = task.querySelector('.task-title').textContent.toLowerCase();
+            const meta = task.querySelector('.task-meta').textContent.toLowerCase();
+
+            // Check search match
+            let matchesSearch = true;
+            if (searchLower) {
+                matchesSearch = title.includes(searchLower) || meta.includes(searchLower);
+            }
+
+            // Check tab filter
+            let matchesFilter = false;
+            switch(filter) {
+                case 'all':
+                    matchesFilter = true;
+                    break;
+                case 'today':
+                    matchesFilter = isToday && status === 'pending';
+                    break;
+                case 'overdue':
+                    matchesFilter = isOverdue;
+                    break;
+                case 'completed':
+                    matchesFilter = status === 'completed';
+                    break;
+                default:
+                    matchesFilter = true;
+            }
+
+            task.style.display = (matchesSearch && matchesFilter) ? 'flex' : 'none';
+        });
+
+        // Update visible count
+        const visibleTasks = document.querySelectorAll('.task-item[style="display: flex;"], .task-item:not([style])');
+    }
+
+    // Keyboard shortcut: Cmd/Ctrl + K to focus search
+    document.addEventListener('keydown', function(e) {
+        if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+            e.preventDefault();
+            searchInput.focus();
+            searchInput.select();
+        }
     });
 </script>
 {% endblock %}
