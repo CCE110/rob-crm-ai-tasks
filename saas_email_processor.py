@@ -868,29 +868,36 @@ def check_and_send_reminders():
     print(f"\n🔔 Checking for tasks due soon...")
 
     try:
-        # Get current time in AEST
-        aest = pytz.timezone('Australia/Brisbane')
-        now = datetime.now(aest)
-        today_str = now.date().isoformat()
-
-        # Get all pending tasks due today
+        # Get all pending tasks with due times (check multiple timezones)
         result = supabase.table('tasks')\
             .select('*, users!tasks_user_id_fkey(id, email, full_name, timezone)')\
             .eq('status', 'pending')\
-            .eq('due_date', today_str)\
+            .not_.is_('due_time', 'null')\
             .execute()
 
         tasks = result.data or []
-        tasks_with_time = [t for t in tasks if t.get('due_time')]
 
-        if not tasks_with_time:
-            print("    No tasks with due times today")
+        if not tasks:
+            print("    No pending tasks with due times")
             return
 
         sent_count = 0
 
-        for task in tasks_with_time:
+        for task in tasks:
             try:
+                user = task.get('users')
+                if not user:
+                    continue
+
+                # Get user's timezone (default to Brisbane)
+                user_tz = pytz.timezone(user.get('timezone', 'Australia/Brisbane'))
+                now = datetime.now(user_tz)
+                today_str = now.date().isoformat()
+
+                # Skip if task is not due today in user's timezone
+                if task.get('due_date') != today_str:
+                    continue
+
                 # Parse due time
                 due_time_str = task['due_time']
                 parts = due_time_str.split(':')
@@ -905,14 +912,10 @@ def check_and_send_reminders():
                     if task.get('reminder_sent_at'):
                         try:
                             sent_at = datetime.fromisoformat(task['reminder_sent_at'].replace('Z', '+00:00'))
-                            if sent_at.astimezone(aest).date() == now.date():
+                            if sent_at.astimezone(user_tz).date() == now.date():
                                 continue  # Already sent today
                         except:
                             pass
-
-                    user = task.get('users')
-                    if not user:
-                        continue
 
                     print(f"    📧 Sending reminder: {task['title'][:40]}...")
 
