@@ -2581,37 +2581,71 @@ def handle_action():
                 """, title=task_title, new_date=new_date)
 
             elif action == 'delay_custom' or action == 'reschedule':
-                # Show reschedule form
+                # Show reschedule form with full edit capability
                 current_date = task_data.get('due_date', datetime.now().date().isoformat())
                 current_time = task_data.get('due_time', '09:00:00')[:5]
+                checklist = task_data.get('checklist', []) or []
+
+                # Build checklist HTML
+                checklist_html = ""
+                if checklist:
+                    checklist_html = '<label>Checklist:</label><div class="checklist">'
+                    for i, item in enumerate(checklist):
+                        item_text = item.get('text', '') if isinstance(item, dict) else str(item)
+                        checklist_html += f'<input type="text" name="checklist_{i}" value="{item_text}" placeholder="Checklist item">'
+                    checklist_html += '</div>'
+                    checklist_html += '<input type="hidden" name="checklist_count" value="' + str(len(checklist)) + '">'
 
                 return render_template_string("""
-                <html><head><title>Reschedule Task</title>
+                <html><head><title>Edit Task</title>
+                <meta name="viewport" content="width=device-width, initial-scale=1">
                 <style>
-                    body { font-family: sans-serif; padding: 20px; max-width: 500px; margin: 0 auto; background: #f9fafb; }
+                    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; padding: 20px; max-width: 500px; margin: 0 auto; background: #f9fafb; }
                     .card { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
                     h2 { color: #374151; margin-bottom: 20px; }
-                    label { display: block; margin-bottom: 5px; font-weight: 500; }
-                    input { width: 100%; padding: 12px; margin-bottom: 15px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 16px; }
-                    button { width: 100%; padding: 14px; background: #6366F1; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer; }
+                    label { display: block; margin-bottom: 5px; font-weight: 500; color: #374151; }
+                    input, textarea { width: 100%; padding: 12px; margin-bottom: 15px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 16px; box-sizing: border-box; }
+                    textarea { resize: vertical; min-height: 60px; }
+                    .checklist input { margin-bottom: 8px; }
+                    .row { display: flex; gap: 12px; }
+                    .row > div { flex: 1; }
+                    button { width: 100%; padding: 14px; background: #6366F1; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer; margin-top: 10px; }
                     button:hover { background: #4f46e5; }
+                    .delete-btn { background: #EF4444; margin-top: 20px; }
+                    .delete-btn:hover { background: #DC2626; }
                 </style>
                 </head>
                 <body>
                     <div class="card">
-                        <h2>🗓️ Reschedule Task</h2>
-                        <p style="margin-bottom: 20px; color: #6b7280;"><strong>{{ title }}</strong></p>
+                        <h2>📝 Edit Task</h2>
                         <form method="POST" action="/action/reschedule_submit">
                             <input type="hidden" name="task_id" value="{{ task_id }}">
-                            <label>New Date:</label>
-                            <input type="date" name="new_date" value="{{ current_date }}" required>
-                            <label>New Time:</label>
-                            <input type="time" name="new_time" value="{{ current_time }}" required>
+
+                            <label>Task Title:</label>
+                            <input type="text" name="title" value="{{ title }}" required>
+
+                            <div class="row">
+                                <div>
+                                    <label>Date:</label>
+                                    <input type="date" name="new_date" value="{{ current_date }}" required>
+                                </div>
+                                <div>
+                                    <label>Time:</label>
+                                    <input type="time" name="new_time" value="{{ current_time }}" required>
+                                </div>
+                            </div>
+
+                            {{ checklist_html|safe }}
+
                             <button type="submit">💾 Save Changes</button>
+                        </form>
+                        <form method="POST" action="/action/task_delete" onsubmit="return confirm('Delete this task?');">
+                            <input type="hidden" name="task_id" value="{{ task_id }}">
+                            <button type="submit" class="delete-btn">🗑️ Delete Task</button>
                         </form>
                     </div>
                 </body></html>
-                """, title=task_title, task_id=task_id, current_date=current_date, current_time=current_time)
+                """, title=task_title, task_id=task_id, current_date=current_date, current_time=current_time, checklist_html=checklist_html)
 
         except Exception as e:
             print(f"Action error: {e}")
@@ -2638,6 +2672,8 @@ def handle_reschedule_submit():
     task_id = request.form.get('task_id')
     new_date = request.form.get('new_date')
     new_time = request.form.get('new_time')
+    new_title = request.form.get('title')
+    checklist_count = request.form.get('checklist_count')
 
     if not task_id or not new_date or not new_time:
         return render_template_string("""
@@ -2647,27 +2683,82 @@ def handle_reschedule_submit():
         """)
 
     try:
-        # Get task title
-        task = supabase.table('tasks').select('title').eq('id', task_id).single().execute()
-        task_title = task.data.get('title', 'Task') if task.data else 'Task'
-
-        # Update task
-        supabase.table('tasks').update({
+        # Build update data
+        update_data = {
             'due_date': new_date,
             'due_time': new_time + ':00',
             'reminder_sent_at': None,
             'status': 'pending'
-        }).eq('id', task_id).execute()
+        }
+
+        # Update title if provided
+        if new_title:
+            update_data['title'] = new_title.strip()
+
+        # Update checklist if provided
+        if checklist_count:
+            try:
+                count = int(checklist_count)
+                new_checklist = []
+                for i in range(count):
+                    item_text = request.form.get(f'checklist_{i}', '').strip()
+                    if item_text:
+                        new_checklist.append({'text': item_text, 'completed': False})
+                if new_checklist:
+                    update_data['checklist'] = new_checklist
+            except:
+                pass
+
+        # Update task
+        supabase.table('tasks').update(update_data).eq('id', task_id).execute()
+
+        task_title = new_title or 'Task'
 
         return render_template_string("""
-        <html><head><title>Task Rescheduled</title></head>
-        <body style="font-family: sans-serif; text-align: center; padding: 50px; background: #eff6ff;">
-            <h2 style="color: #6366F1;">📅 Task Rescheduled!</h2>
+        <html><head><title>Task Updated</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        </head>
+        <body style="font-family: -apple-system, sans-serif; text-align: center; padding: 50px; background: #f0fdf4;">
+            <h2 style="color: #10B981;">✅ Task Updated!</h2>
             <p><strong>{{ title }}</strong></p>
-            <p>New: {{ date }} at {{ time }}</p>
-            <a href="https://www.jottask.app/dashboard" style="color: #6366F1;">Open Dashboard</a>
+            <p>Scheduled: {{ date }} at {{ time }}</p>
+            <a href="https://www.jottask.app/dashboard" style="display: inline-block; margin-top: 20px; padding: 12px 24px; background: #6366F1; color: white; text-decoration: none; border-radius: 8px;">Open Dashboard</a>
         </body></html>
         """, title=task_title, date=new_date, time=new_time)
+
+    except Exception as e:
+        return render_template_string("""
+        <html><body style="font-family: sans-serif; text-align: center; padding: 50px;">
+            <h2>Error</h2><p>{{ error }}</p>
+        </body></html>
+        """, error=str(e))
+
+
+@app.route('/action/task_delete', methods=['POST'])
+def handle_task_delete():
+    """Handle task deletion from email edit page"""
+    task_id = request.form.get('task_id')
+
+    if not task_id:
+        return render_template_string("""
+        <html><body style="font-family: sans-serif; text-align: center; padding: 50px;">
+            <h2>Error</h2><p>Missing task ID</p>
+        </body></html>
+        """)
+
+    try:
+        supabase.table('tasks').delete().eq('id', task_id).execute()
+
+        return render_template_string("""
+        <html><head><title>Task Deleted</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        </head>
+        <body style="font-family: -apple-system, sans-serif; text-align: center; padding: 50px; background: #fef2f2;">
+            <h2 style="color: #EF4444;">🗑️ Task Deleted</h2>
+            <p>The task has been removed.</p>
+            <a href="https://www.jottask.app/dashboard" style="display: inline-block; margin-top: 20px; padding: 12px 24px; background: #6366F1; color: white; text-decoration: none; border-radius: 8px;">Open Dashboard</a>
+        </body></html>
+        """)
 
     except Exception as e:
         return render_template_string("""
