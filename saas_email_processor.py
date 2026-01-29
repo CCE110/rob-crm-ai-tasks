@@ -583,6 +583,103 @@ def process_project_email(user_id, user_email, subject, body, user_name=None):
     return project
 
 
+def is_missed_call_email(subject, body):
+    """Detect if email is a missed call follow-up"""
+    text = (subject + ' ' + body).lower()
+    missed_indicators = [
+        'missed you', 'sorry i missed', 'tried to call', 'couldn\'t reach',
+        'unable to reach', 'no answer', 'missed call', 'tried calling',
+        'called and missed', 'give me a call', 'call me back'
+    ]
+    return any(indicator in text for indicator in missed_indicators)
+
+
+def extract_name_from_email(subject, to_header, body):
+    """Extract contact name from subject, To header, or body"""
+    # Try subject first - format: "Name - sorry I missed you"
+    if ' - ' in subject:
+        name = subject.split(' - ')[0].strip()
+        if len(name) > 1 and len(name) < 50:
+            return name
+
+    # Try "Hi Name" pattern from body
+    import re
+    hi_match = re.search(r'(?:^|\n)\s*(?:Hi|Hello|Hey|Dear)\s+([A-Z][a-z]+)', body)
+    if hi_match:
+        return hi_match.group(1)
+
+    # Try To header - extract name before email
+    if to_header and '<' in to_header:
+        name_part = to_header.split('<')[0].strip().strip('"').strip("'")
+        if name_part and len(name_part) > 1:
+            return name_part
+
+    # Try extracting from To email address
+    if to_header:
+        to_email = to_header.split('<')[-1].replace('>', '').strip() if '<' in to_header else to_header
+        # Get part before @ and capitalize
+        name_from_email = to_email.split('@')[0].replace('.', ' ').replace('_', ' ').title()
+        if name_from_email and len(name_from_email) > 1:
+            return name_from_email
+
+    return "Contact"
+
+
+def process_missed_call_email(user_id, user_email, subject, body, to_header, user_timezone, user_name=None):
+    """Process a missed call CC email - create follow-up task for tomorrow"""
+    print(f"    📞 Processing missed call follow-up...")
+
+    # Extract contact name
+    contact_name = extract_name_from_email(subject, to_header, body)
+
+    # Get user's timezone for task scheduling
+    tz = pytz.timezone(user_timezone)
+    now = datetime.now(tz)
+    tomorrow = (now + timedelta(days=1)).date().isoformat()
+
+    # Default to 9 AM tomorrow
+    due_time = "09:00:00"
+
+    # Create task title
+    task_title = f"{contact_name}, try again - missed call - Lead"
+
+    # Create the task
+    task_data = {
+        'user_id': user_id,
+        'title': task_title,
+        'description': f"Follow up call - original email subject: {subject}",
+        'due_date': tomorrow,
+        'due_time': due_time,
+        'priority': 'medium',
+        'status': 'pending',
+        'client_name': contact_name,
+        'source': 'email_cc'
+    }
+
+    try:
+        result = supabase.table('tasks').insert(task_data).execute()
+        if result.data:
+            task = result.data[0]
+            print(f"    ✅ Missed call follow-up created: {task_title}")
+
+            # Send confirmation email
+            send_task_confirmation_email(
+                user_email=user_email,
+                task_title=task_title,
+                due_date=tomorrow,
+                due_time=due_time,
+                task_id=task['id'],
+                user_name=user_name,
+                user_id=user_id
+            )
+
+            return task
+    except Exception as e:
+        print(f"    ❌ Failed to create missed call task: {e}")
+
+    return None
+
+
 def process_central_inbox():
     """Process emails from the central Jottask inbox"""
     print(f"\n📧 Processing central inbox: {JOTTASK_EMAIL}")
@@ -648,6 +745,28 @@ def process_central_inbox():
 
             # Get body
             body = get_email_body(msg)
+
+            # Get To header for CC detection
+            to_header = msg.get('To', '')
+
+            # Check if this is a missed call follow-up (CC'd to jottask)
+            if is_missed_call_email(subject, body):
+                user_profile = supabase.table('users').select('full_name').eq('id', user_id).single().execute()
+                user_name = user_profile.data.get('full_name') if user_profile.data else None
+
+                task = process_missed_call_email(
+                    user_id=user_id,
+                    user_email=user['email'],
+                    subject=subject,
+                    body=body,
+                    to_header=to_header,
+                    user_timezone=user_timezone,
+                    user_name=user_name
+                )
+                if task:
+                    mark_email_processed(email_id_str, user_id)
+                    imap.store(email_id, '+FLAGS', '\\Seen')
+                    continue
 
             # Check if this is a project email
             if is_project_email(subject):
